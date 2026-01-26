@@ -1,0 +1,317 @@
+
+
+* ✅ **Bắt buộc sử dụng DTO**
+* ✅ **Viết tay async/await (Task-based)**
+* ✅ **Non-blocking, không dùng Thread.Sleep / blocking Receive**
+
+---
+
+# 📘 APPLICATION DESIGN DOCUMENT
+
+## HỆ THỐNG REMOTE DESKTOP ĐƠN GIẢN (TEAMVIEWER-LIKE)
+
+---
+
+## 1. MỤC TIÊU HỆ THỐNG
+
+Xây dựng hệ thống **Remote Desktop Client–Server** cho phép điều khiển máy tính từ xa với các yêu cầu:
+
+* Truyền màn hình theo thời gian thực
+* Điều khiển chuột và bàn phím
+* Truyền file hai chiều
+* Chứng thực client bằng **CA nội bộ + SSL/TLS**
+* Mã hóa dữ liệu bằng **AES/RSA**
+* Sử dụng **DTO (Data Transfer Object)** để truyền dữ liệu
+* Xử lý mạng **bất đồng bộ (async/await, non-blocking)**
+* Lưu lịch sử kết nối client
+
+Ngôn ngữ: **C# WinForms**
+Phạm vi: **Bài lab / đồ án môn Lập trình mạng**
+
+---
+
+## 2. NGUYÊN TẮC THIẾT KẾ (BẮT BUỘC)
+
+### 2.1 DTO-first design
+
+* **Không truyền string tự do**
+* Mọi dữ liệu trao đổi **đều thông qua DTO**
+* DTO đóng vai trò là **hợp đồng giao tiếp**
+
+---
+
+### 2.2 Asynchronous & Non-blocking
+
+* Sử dụng **async/await**
+* Không dùng:
+
+  * `Thread.Sleep`
+  * `Socket.Receive()` blocking
+  * Vòng lặp busy-wait
+
+👉 Tất cả IO mạng đều **không chặn luồng UI**
+
+---
+
+### 2.3 Shared Contract
+
+* Server và Client dùng chung:
+
+  * Protocol
+  * DTO
+  * Cơ chế mã hóa
+
+---
+
+## 3. KIẾN TRÚC TỔNG THỂ
+
+### 3.1 Mô hình
+
+```
+Client ⇄ SSL/TLS (TCP) ⇄ Server
+```
+
+* TCP + SslStream
+* Payload mã hóa AES
+* Key trao đổi bằng RSA
+
+---
+
+## 4. CẤU TRÚC SOLUTION (ĐỒNG BỘ CHO NHÓM)
+
+```
+RemoteDesktopSolution
+│
+├── Shared
+│   ├── Protocol
+│   ├── DTO
+│   ├── Security
+│   └── Utils
+│
+├── RemoteDesktop.Server
+│
+└── RemoteDesktop.Client
+```
+
+---
+
+## 5. SHARED MODULE
+
+### 5.1 Protocol (Packet Type)
+
+```csharp
+enum PacketType
+{
+    Handshake,
+    LoginRequest,
+    LoginResponse,
+    ScreenFrame,
+    InputEvent,
+    FileMeta,
+    FileChunk,
+    FileAck,
+    Heartbeat,
+    Disconnect
+}
+```
+
+---
+
+### 5.2 Packet Structure (Binary)
+
+```
+| PacketHeader | Payload |
+```
+
+**PacketHeader**
+
+| Field         | Size     |
+| ------------- | -------- |
+| PacketType    | 4 bytes  |
+| PayloadLength | 4 bytes  |
+| SessionId     | 16 bytes |
+
+📌 Payload luôn là **DTO đã serialize + mã hóa**
+
+---
+
+### 5.3 DTO Design
+
+#### Login
+
+```csharp
+class LoginRequestDto
+{
+    string Username;
+    string PasswordHash;
+}
+
+class LoginResponseDto
+{
+    bool Success;
+    string Message;
+}
+```
+
+#### Input
+
+```csharp
+class InputEventDto
+{
+    InputType Type;   // Mouse / Keyboard
+    int X;
+    int Y;
+    int KeyCode;
+}
+```
+
+#### Screen
+
+```csharp
+class ScreenFrameDto
+{
+    byte[] ImageData;
+    int Width;
+    int Height;
+}
+```
+
+#### File
+
+```csharp
+class FileChunkDto
+{
+    string FileName;
+    int ChunkIndex;
+    byte[] Data;
+}
+```
+
+---
+
+## 6. BẢO MẬT (SECURITY)
+
+### 6.1 CA nội bộ
+
+* CA được **tích hợp trực tiếp trong Server**
+* Server:
+
+  * Tạo CA
+  * Ký chứng chỉ TLS
+* Client:
+
+  * Tin CA server
+  * Verify cert khi kết nối
+
+---
+
+### 6.2 SSL/TLS + Encryption
+
+| Thành phần   | Kỹ thuật |
+| ------------ | -------- |
+| Transport    | SSL/TLS  |
+| Payload      | AES      |
+| Key Exchange | RSA      |
+
+---
+
+## 7. SERVER APPLICATION
+
+### 7.1 Chức năng
+
+* Lắng nghe client bất đồng bộ
+* TLS handshake
+* Xác thực đăng nhập
+* Capture & stream màn hình
+* Nhận input
+* Truyền file
+* Lưu lịch sử
+
+---
+
+### 7.2 Server Structure
+
+```
+Server
+├── UI
+├── Network
+│   ├── AsyncTcpListener
+│   └── ClientSession
+├── Services
+├── Data
+└── Program.cs
+```
+
+---
+
+### 7.3 Server Async Flow
+
+```mermaid
+flowchart TD
+    Start --> ListenAsync
+    ListenAsync --> AcceptClientAsync
+    AcceptClientAsync --> TLSHandshakeAsync
+    TLSHandshakeAsync --> ReceiveLoopAsync
+    ReceiveLoopAsync --> ProcessPacket
+```
+
+📌 **Mỗi ClientSession chạy async, không block server**
+
+---
+
+## 8. CLIENT APPLICATION
+
+### 8.1 Chức năng
+
+* Kết nối TLS async
+* Gửi login DTO
+* Nhận màn hình
+* Gửi input
+* Truyền file
+
+---
+
+### 8.2 Client Structure
+
+```
+Client
+├── UI
+├── Network
+│   └── ClientConnection
+├── Services
+└── Program.cs
+```
+
+---
+
+### 8.3 Client Async Flow
+
+```mermaid
+flowchart TD
+    Start --> ConnectAsync
+    ConnectAsync --> TLSVerifyAsync
+    TLSVerifyAsync --> LoginAsync
+    LoginAsync --> ReceiveLoopAsync
+```
+
+---
+
+## 9. TRUYỀN FILE (ASYNC – NON-BLOCKING)
+
+* Chia file thành chunk
+* Gửi từng chunk bằng `await WriteAsync`
+* Server trả ACK
+* Có thể resume (nâng cao)
+
+---
+
+## 10. LỊCH SỬ CLIENT
+
+Lưu:
+
+* Username
+* IP
+* Thời gian kết nối
+* Thời gian ngắt
+
+---
