@@ -1,4 +1,4 @@
-using remoteServer.Shared;
+using Shared;
 using remoteServer.Utils;
 using System;
 using System.IO;
@@ -12,7 +12,7 @@ using System.Threading.Tasks;
 namespace remoteServer.Network
 {
     // ClientSession ??i di?n cho 1 k?t n?i client
-    // Ch?y vòng l?p nh?n không ch?n (async) và x? lý Packet
+    // Ch?y vòng l?p nh?n không ch?n (async) và x? lí Packet
     public class ClientSession
     {
         private readonly TcpClient _client;
@@ -78,7 +78,7 @@ namespace remoteServer.Network
             }
         }
 
-        // B?n s?a: ProcessPacket s? d?ng async và g?i InputSimulator
+        // B?n s?a: ProcessPacket s? dùng async và g?i InputSimulator
         private async Task ProcessPacketAsync(PacketHeader header, byte[] payload)
         {
             try
