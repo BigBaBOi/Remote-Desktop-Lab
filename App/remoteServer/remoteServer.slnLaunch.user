@@ -1,0 +1,11 @@
+[
+  {
+    "Name": "New Profile",
+    "Projects": [
+      {
+        "Path": "remoteClient\\remoteClient.csproj",
+        "Action": "Start"
+      }
+    ]
+  }
+]
