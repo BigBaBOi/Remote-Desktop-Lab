@@ -22,7 +22,7 @@ namespace remoteServer.Network
     /// </summary>
     public class ClientSession
     {
-        #region Fields
+        #region Fields (Các biến trạng thái)
         
         // Kết nối mạng
         private readonly TcpClient _client;
@@ -36,29 +36,29 @@ namespace remoteServer.Network
         private int _sessionId = -1; // ID log trong Database
         private CancellationTokenSource _cts; // Token để hủy các luồng chạy nền
 
-        // Encryption (Bảo mật)
+        // Encryption (Bảo mật - Mã hóa)
         private string _rsaPublicKey;
         private string _rsaPrivateKey;
         private byte[] _aesKey;
         private byte[] _aesIV;
         private bool _isEncrypted = false; // Cờ bật/tắt mã hóa AES
 
-        // Core Components
+        // Core Components (Thành phần chính)
         private ScreenCaptureService _screenCapture;
         private InputSimulatorService _inputSimulator;
 
-        // Thread Safety
+        // Thread Safety (Khóa luồng)
         private readonly System.Threading.SemaphoreSlim _streamLock = new System.Threading.SemaphoreSlim(1, 1);
 
         #endregion
 
-        #region Properties
+        #region Properties (Thuộc tính)
 
-        public string ClientInfo => _clientIp + (_isAuthenticated ? " (Đã đăng nhập)" : "");
+        public string ClientInfo => _clientIp + (_isAuthenticated ? " (Đã đăng nhập)" : " (Khách)");
 
         #endregion
 
-        #region Constructor
+        #region Constructor (Khởi tạo)
 
         public ClientSession(TcpClient client, X509Certificate2? certificate)
         {
@@ -72,6 +72,7 @@ namespace remoteServer.Network
             _cts = new CancellationTokenSource();
             
             // Tạo cặp khóa RSA mới (Ephemeral Keys) cho mỗi phiên kết nối
+            // Mỗi Client sẽ có một cặp khóa riêng để đảm bảo an toàn
             var keys = SecurityHelper.GenerateRsaKeys();
             _rsaPublicKey = keys.PublicKey;
             _rsaPrivateKey = keys.PrivateKey;
@@ -88,16 +89,16 @@ namespace remoteServer.Network
 
         #endregion
 
-        #region Main Process Loop
+        #region Main Process Loop (Vòng lặp chính)
 
         /// <summary>
-        /// Vòng lặp chính xử lý kết nối Client (Handshake -> Loop Nhận Packet).
+        /// Vòng lặp chính xử lý kết nối Client (Handshake -> Loop Nhận Packet -> Kết thúc).
         /// </summary>
         public async Task ProcessAsync()
         {
             try
             {
-                Stream networkStream = _client.GetStream();
+                var networkStream = _client.GetStream();
 
                 // 1. Thiết lập SSL/TLS nếu có chứng chỉ Server
                 if (_serverCertificate != null)
@@ -106,8 +107,10 @@ namespace remoteServer.Network
                     try
                     {
                         // Xác thực Server với Client (Client không cần chứng chỉ)
+                        Console.WriteLine($"[SSL] Bắt đầu Handshake với {_clientIp}...");
                         await sslStream.AuthenticateAsServerAsync(_serverCertificate, clientCertificateRequired: false, checkCertificateRevocation: false);
                         _stream = sslStream;
+                        Console.WriteLine($"[SSL] Handshake thành công. Mã hóa: {sslStream.CipherAlgorithm} {sslStream.CipherStrength} bit");
                     }
                     catch (Exception ex)
                     {
@@ -120,7 +123,7 @@ namespace remoteServer.Network
                     _stream = networkStream;
                 }
 
-                // 2. Gửi RSA Public Key cho Client để bắt đầu Handshake E2E
+                // 2. Gửi RSA Public Key cho Client để bắt đầu Handshake E2E (Mã hóa ứng dụng)
                 await SendPublicKeyAsync();
 
                 // 3. Vòng lặp nhận Packet từ Client
@@ -147,6 +150,13 @@ namespace remoteServer.Network
                     byte[] payloadBuffer = Array.Empty<byte>();
                     if (header.PayloadLength > 0)
                     {
+                        // Giới hạn kích thước gói tin để tránh bị tấn công DDOS/Tràn bộ nhớ (Max 10MB)
+                        if (header.PayloadLength > 10 * 1024 * 1024) 
+                        {
+                            Console.WriteLine($"[Lỗi] Gói tin quá lớn ({header.PayloadLength} bytes). Ngắt kết nối.");
+                            break;
+                        }
+
                         payloadBuffer = new byte[header.PayloadLength];
                         int payloadRead = await ReadExactAsync(_stream, payloadBuffer, header.PayloadLength);
                         if (payloadRead != header.PayloadLength) break; // Đọc thiếu dữ liệu -> Ngắt kết nối
@@ -161,7 +171,7 @@ namespace remoteServer.Network
                         }
                         catch
                         {
-                            Console.WriteLine($"[Lỗi] Giải mã gói tin thất bại. Ngắt kết nối.");
+                            Console.WriteLine($"[Lỗi] Giải mã gói tin thất bại. Có thể khóa sai lệch.");
                             break; 
                         }
                     }
@@ -172,7 +182,9 @@ namespace remoteServer.Network
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[Session] Lỗi xử lý: {ex.Message}");
+                // Lỗi IOException thường xảy ra khi Client ngắt đột ngột, không cần log quá chi tiết
+                if (!(ex is IOException))
+                    Console.WriteLine($"[Session] Lỗi: {ex.Message}");
             }
             finally
             {
@@ -182,10 +194,10 @@ namespace remoteServer.Network
 
         #endregion
 
-        #region Logic Methods
+        #region Logic Methods (Xử lý gói tin)
 
         /// <summary>
-        /// Xử lý logic từng loại gói tin nhận được.
+        /// Xử lý logic từng loại gói tin nhận được dựa trên PacketType.
         /// </summary>
         private async Task HandlePacketAsync(PacketType type, byte[] payload)
         {
@@ -221,15 +233,17 @@ namespace remoteServer.Network
                     break;
 
                 case PacketType.FileChunk:
+                    // Nhận một phần file gửi lên
                     await HandleFileChunk(payload);
                     break;
 
                 case PacketType.Disconnect:
+                    Console.WriteLine($"[Disconnect] Client {_clientIp} yêu cầu ngắt kết nối.");
                     _client.Close();
                     _cts.Cancel();
                     break;
             }
-            // Yield để tránh block thread
+            // Yield để tránh block thread xử lý packet tiếp theo quá lâu
             await Task.Yield();
         }
 
@@ -242,9 +256,10 @@ namespace remoteServer.Network
                 var loginDto = SerializationHelper.Deserialize<LoginRequestDto>(payload);
                 if (loginDto != null)
                 {
-                    Console.WriteLine($"[Login] Kiểm tra: {loginDto.Username}");
+                    Console.WriteLine($"[Login] Yêu cầu đăng nhập: {loginDto.Username}");
                     
-                    // Wrap synchronous DB call in Task.Run
+                    // Chạy xác thực trên luồng khác để không chặn luồng mạng
+                    // Sử dụng Task.Run để tránh đóng băng nếu DB phản hồi chậm
                     loginSuccess = await Task.Run(() => _service.Login(loginDto.Username, loginDto.PasswordHash));
                     
                     loginMsg = loginSuccess ? "OK" : "Sai tên đăng nhập hoặc mật khẩu";
@@ -252,22 +267,29 @@ namespace remoteServer.Network
                     {
                         _isAuthenticated = true;
                         string clientIp = _clientIp;
-                        // Async wrapper for logging
+                        
+                        // Ghi log phiên làm việc (Async/Fire-and-forget hoặc await nhanh)
+                        // Giờ LogSessionStart trong DatabaseService đã có timeout ngắn
                         _sessionId = await Task.Run(() => _service.LogSession(loginDto.Username, clientIp));
                         Console.WriteLine($"[Login] Thành công. SessionID: {_sessionId}. Bắt đầu gửi màn hình.");
                         
-                        // Bắt đầu luồng chụp màn hình gửi đi
+                        // Bắt đầu luồng gửi màn hình (Screen Stream)
                         _cts = new CancellationTokenSource();
                         _ = Task.Run(() => SendScreenUpdatesAsync(_cts.Token));
+                    }
+                    else
+                    {
+                         Console.WriteLine($"[Login] Thất bại: {loginDto.Username}");
                     }
                 }
             } 
             catch (Exception ex) 
             {
                 loginMsg = $"Server Error: {ex.Message}";
+                Console.WriteLine($"[Login] Exception: {ex.Message}");
             }
             
-            // Phản hồi kết quả đăng nhập
+            // Phản hồi kết quả về Client
             var responseDto = new LoginResponseDto { IsSuccess = loginSuccess, Message = loginMsg };
             await SendPacketAsync(PacketType.LoginResponse, SerializationHelper.Serialize(responseDto));
         }
@@ -281,7 +303,7 @@ namespace remoteServer.Network
                 var regDto = SerializationHelper.Deserialize<RegisterRequestDto>(payload);
                 if (regDto != null)
                 {
-                    // Wrap DB call and handle 'out' parameter
+                    // Chạy đăng ký trên luồng khác
                     var result = await Task.Run(() => 
                     {
                         string msg;
@@ -309,11 +331,12 @@ namespace remoteServer.Network
             var chunkDto = SerializationHelper.Deserialize<FileChunkDto>(payload);
             if (chunkDto != null)
             {
+                // Thư mục lưu file nhận được
                 string saveDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ReceivedFiles");
                 Directory.CreateDirectory(saveDir);
                 string filePath = Path.Combine(saveDir, chunkDto.FileName);
                 
-                // Ghi file nối tiếp
+                // Ghi dữ liệu vào file (Append - Nối tiếp)
                 using (var fs = new FileStream(filePath, chunkDto.ChunkIndex == 0 ? FileMode.Create : FileMode.Append, FileAccess.Write))
                 {
                     await fs.WriteAsync(chunkDto.Data, 0, chunkDto.Data.Length);
@@ -331,14 +354,15 @@ namespace remoteServer.Network
         /// </summary>
         private async Task SendScreenUpdatesAsync(CancellationToken token)
         {
+            Console.WriteLine("[Stream] Bắt đầu gửi màn hình.");
             while (!token.IsCancellationRequested && _client.Connected)
             {
                 try
                 {
                     int w, h, l, t, totalW, totalH;
                     
-                    // Chụp màn hình (Dirty Rect)
-                    // Hàm này sẽ trả về null nếu màn hình y hệt frame trước
+                    // Chụp màn hình & Tính toán "Vùng thay đổi" (Dirty Rect)
+                    // Hàm này trả về null nếu màn hình không thay đổi gì so với frame trước
                     byte[] imageBytes = _screenCapture.CaptureScreen(out w, out h, out l, out t, out totalW, out totalH);
                     
                     if (imageBytes != null && imageBytes.Length > 0)
@@ -346,11 +370,11 @@ namespace remoteServer.Network
                         var screenDto = new ScreenFrameDto
                         {
                             ImageData = imageBytes,
-                            Width = w,      // Kích thước của mảnh thay đổi (Chunk)
+                            Width = w,      // Kích thước mảnh thay đổi
                             Height = h,
-                            Left = l,       // Vị trí của mảnh thay đổi
+                            Left = l,       // Vị trí
                             Top = t,
-                            TotalWidth = totalW, // Kích thước tổng màn hình
+                            TotalWidth = totalW, // Kích thước gốc
                             TotalHeight = totalH,
                             Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
                         };
@@ -359,14 +383,20 @@ namespace remoteServer.Network
                         await SendPacketAsync(PacketType.ScreenFrame, payload);
                     }
                     
-                    // Giới hạn FPS ~50 FPS (Delay 20ms)
+                    // Giới hạn FPS ~50 (Delay 20ms) để giữ cho CPU không bị quá tải
                     await Task.Delay(20, token); 
                 }
-                catch
+                catch (TaskCanceledException)
                 {
+                    break; // Hủy luồng
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Stream] Lỗi gửi màn hình: {ex.Message}");
                     break;
                 }
             }
+            Console.WriteLine("[Stream] Đã dừng gửi màn hình.");
         }
 
         /// <summary>
@@ -380,7 +410,7 @@ namespace remoteServer.Network
             {
                 string fileName = Path.GetFileName(filePath);
                 long fileSize = new FileInfo(filePath).Length;
-                int chunkSize = 4096; // 4KB
+                int chunkSize = 4096; // 4KB mỗi gói
                 byte[] buffer = new byte[chunkSize];
                 int chunkIndex = 0;
 
@@ -397,11 +427,13 @@ namespace remoteServer.Network
                             IsLastChunk = (fs.Position == fileSize),
                             Data = new byte[bytesRead]
                         };
+                        // Copy dữ liệu thực vào mảng đích
                         Array.Copy(buffer, chunkDto.Data, bytesRead);
 
                         await SendPacketAsync(PacketType.FileChunk, SerializationHelper.Serialize(chunkDto));
                         
-                        if (chunkIndex % 10 == 0) await Task.Delay(10); // Throttle
+                        // Nghỉ một xíu sau mỗi 10 gói để tránh nghẽn mạng
+                        if (chunkIndex % 10 == 0) await Task.Delay(10); 
                     }
                 }
                 Console.WriteLine($"[File] Đã gửi: {fileName} -> Client");
@@ -414,11 +446,12 @@ namespace remoteServer.Network
 
         #endregion
 
-        #region Helper Methods (Send Packet, Read Stream)
+        #region Helper Methods (Gửi nhận Packet thấp cấp)
 
         private async Task SendPublicKeyAsync()
         {
             var pubKeyDto = new PublicKeyDto { PublicKeyXml = _rsaPublicKey };
+            // Gửi key ở dạng Plain text (chưa mã hóa) để Client có thể đọc được
             await SendPacketAsync(PacketType.Handshake, SerializationHelper.Serialize(pubKeyDto), forcePlain: true);
         }
 
@@ -426,7 +459,7 @@ namespace remoteServer.Network
         {
             if (!_client.Connected) return;
 
-            // Mã hóa AES nếu cần
+            // Mã hóa AES payload nếu trạng thái đã Authenticated (trừ khi forced plain)
             if (_isEncrypted && !forcePlain)
             {
                 payload = SecurityHelper.AesEncrypt(payload, _aesKey, _aesIV);
@@ -437,10 +470,10 @@ namespace remoteServer.Network
             {
                 Type = type,
                 PayloadLength = payload.Length,
-                SessionId = new byte[16] 
+                SessionId = new byte[16] // Giả lập SessionID (chưa dùng)
             };
 
-            // Header -> Byte[]
+            // Chuyển Header struct -> byte[]
             int headerSize = Marshal.SizeOf(header);
             byte[] headerBytes = new byte[headerSize];
             IntPtr ptr = Marshal.AllocHGlobal(headerSize);
@@ -454,12 +487,13 @@ namespace remoteServer.Network
                 Marshal.FreeHGlobal(ptr);
             }
 
-            // Gửi dữ liệu (Thread-safe)
+            // Gửi dữ liệu xuống Stream an toàn (Thread-safe)
             await WriteToStreamAsync(headerBytes, payload);
         }
 
         private async Task WriteToStreamAsync(byte[] header, byte[] payload)
         {
+            // Dùng Semaphore để đảm bảo chỉ có 1 luồng ghi vào Stream tại 1 thời điểm
             await _streamLock.WaitAsync();
             try
             {
@@ -472,7 +506,7 @@ namespace remoteServer.Network
             }
             catch
             {
-                CleanupSession();
+                CleanupSession(); // Ghi lỗi -> Hủy kết nối
             }
             finally
             {
@@ -486,7 +520,7 @@ namespace remoteServer.Network
             while (totalRead < length)
             {
                 int read = await stream.ReadAsync(buffer, totalRead, length - totalRead);
-                if (read == 0) return 0;
+                if (read == 0) return 0; // Kết nối bị đóng
                 totalRead += read;
             }
             return totalRead;
@@ -494,10 +528,16 @@ namespace remoteServer.Network
 
         private void CleanupSession()
         {
-            if (_sessionId > 0) _service.LogSessionEnd(_sessionId);
-            _cts.Cancel();
-            _client.Close();
-            Console.WriteLine("[Session] Đã kết thúc.");
+            if (_cts.IsCancellationRequested) return; // Đã cleanup rồi
+
+            try 
+            {
+                if (_sessionId > 0) _service.LogSessionEnd(_sessionId);
+                _cts.Cancel();
+                _client.Close();
+                Console.WriteLine($"[Session] {_clientIp} đã ngắt kết nối.");
+            }
+            catch { }
         }
 
         #endregion

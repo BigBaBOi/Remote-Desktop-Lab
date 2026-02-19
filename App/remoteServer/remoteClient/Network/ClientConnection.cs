@@ -1,4 +1,4 @@
-using System;
+dusing System;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 using System.IO;
@@ -14,7 +14,7 @@ using Shared.Utils;
 namespace remoteClient.Network
 {
     /// <summary>
-    /// Class quản lý kết nối từ Client đến Server.
+    /// Lớp quản lý kết nối từ Client đến Server.
     /// Bao gồm: Kết nối TCP/SSL, Handshake bảo mật, gửi/nhận Packet.
     /// </summary>
     public class ClientConnection
@@ -27,8 +27,9 @@ namespace remoteClient.Network
         private byte[] _aesKey;
         private byte[] _aesIV;
         private bool _isEncrypted = false;
+        
+        // Task để đợi Handshake hoàn tất (dùng cho việc chờ đợi ở màn hình Login)
         private TaskCompletionSource<bool> _handshakeTcs = new TaskCompletionSource<bool>();
-
         public Task HandshakeComplete => _handshakeTcs.Task;
 
         // Sự kiện để UI lắng nghe
@@ -44,12 +45,14 @@ namespace remoteClient.Network
         {
             try
             {
-                _handshakeTcs = new TaskCompletionSource<bool>(); // Reset handshake task
+                _handshakeTcs = new TaskCompletionSource<bool>(); // Reset trạng thái handshake
                 _client = new TcpClient();
+                
                 // 1. Kết nối TCP thuần
                 await _client.ConnectAsync(ip, port);
                 
                 Stream networkStream = _client.GetStream();
+                
                 // 2. Nâng cấp lên SSL/TLS
                 // Callback ValidateServerCertificate đang trả về true để chấp nhận chứng chỉ tự ký (Self-signed)
                 SslStream sslStream = new SslStream(
@@ -62,7 +65,8 @@ namespace remoteClient.Network
                 try
                 {
                     // Thực hiện bắt tay SSL với Server
-                    await sslStream.AuthenticateAsClientAsync("RemoteDesktopServer"); // TargetHost phải khớp với CN trong chứng chỉ
+                    // TargetHost phải khớp với CN trong chứng chỉ (nhưng ta ignore lỗi nên tạm để string nào cũng được)
+                    await sslStream.AuthenticateAsClientAsync("RemoteDesktopServer"); 
                     _stream = sslStream;
                 }
                 catch (Exception ex)
@@ -73,6 +77,7 @@ namespace remoteClient.Network
                 }
 
                 _isConnected = true;
+                
                 // Bắt đầu vòng lặp nhận dữ liệu nền
                 _ = ProcessAsync(); 
                 return true;
@@ -106,7 +111,7 @@ namespace remoteClient.Network
                 SessionId = new byte[16] 
             };
 
-            // Marshaling Header -> byte[]
+            // Chuyển đổi Header struct -> byte[]
             int headerSize = Marshal.SizeOf(header);
             byte[] headerBytes = new byte[headerSize];
             IntPtr ptr = Marshal.AllocHGlobal(headerSize);
@@ -124,7 +129,7 @@ namespace remoteClient.Network
             await WriteToStreamAsync(headerBytes, processedPayload);
         }
         
-        // Lock để đảm bảo thread-safe khi ghi dữ liệu (tránh race condition)
+        // Khóa Semaphore để đảm bảo thread-safe khi ghi dữ liệu (tránh tranh chấp luồng)
         private readonly System.Threading.SemaphoreSlim _streamLock = new System.Threading.SemaphoreSlim(1, 1);
         
         private async Task WriteToStreamAsync(byte[] header, byte[] payload)
