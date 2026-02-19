@@ -5,6 +5,14 @@
       {
         "Path": "remoteClient\\remoteClient.csproj",
         "Action": "Start"
+      },
+      {
+        "Path": "remoteServer\\remoteServer.csproj",
+        "Action": "Start"
+      },
+      {
+        "Path": "Shared\\Shared.csproj",
+        "Action": "Start"
       }
     ]
   }

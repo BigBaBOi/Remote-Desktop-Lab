@@ -12,6 +12,9 @@ namespace Shared.Protocol
         FileMeta = 5,
         FileChunk = 6,
         FileAck = 7,
+        RegisterRequest = 11,
+        RegisterResponse = 12,
+        ResolutionRequest = 10, // Added ResolutionRequest
         Heartbeat = 8,
         Disconnect = 9
     }

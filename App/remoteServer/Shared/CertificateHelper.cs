@@ -23,8 +23,9 @@ namespace Shared.Utils
             {
                 return new X509Certificate2(path, password, X509KeyStorageFlags.Exportable);
             }
-            catch
+            catch (Exception ex)
             {
+                Console.WriteLine($"[CertificateHelper] Error loading certificate: {ex.Message}");
                 return null;
             }
         }

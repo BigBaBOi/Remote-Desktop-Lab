@@ -27,6 +27,9 @@ namespace remoteClient.Network
         private byte[] _aesKey;
         private byte[] _aesIV;
         private bool _isEncrypted = false;
+        private TaskCompletionSource<bool> _handshakeTcs = new TaskCompletionSource<bool>();
+
+        public Task HandshakeComplete => _handshakeTcs.Task;
 
         // Sự kiện để UI lắng nghe
         public event Action<string> OnError; // Khi có lỗi kết nối
@@ -41,6 +44,7 @@ namespace remoteClient.Network
         {
             try
             {
+                _handshakeTcs = new TaskCompletionSource<bool>(); // Reset handshake task
                 _client = new TcpClient();
                 // 1. Kết nối TCP thuần
                 await _client.ConnectAsync(ip, port);
@@ -288,6 +292,7 @@ namespace remoteClient.Network
                 byte[] payload = SerializationHelper.Serialize(handshakeDto);
                 await SendPacketAsync(PacketType.Handshake, payload);
                 _isEncrypted = true; // Bật cờ mã hóa phía Client
+                _handshakeTcs.TrySetResult(true); // Handshake hoàn tất
             }
             catch (Exception ex)
             {

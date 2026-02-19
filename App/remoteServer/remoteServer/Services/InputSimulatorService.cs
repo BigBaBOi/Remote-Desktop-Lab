@@ -8,47 +8,49 @@ namespace remoteServer.Services
     public class InputSimulatorService
     {
         [DllImport("user32.dll")]
-        private static extern void mouse_event(int dwFlags, int dx, int dy, int dwData, int dwExtraInfo);
-
-        [DllImport("user32.dll")]
-        private static extern void keybd_event(byte bVk, byte bScan, int dwFlags, int dwExtraInfo);
+        private static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, int dwExtraInfo);
         
         [DllImport("user32.dll")]
-        private static extern bool SetCursorPos(int X, int Y);
+        private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, int dwExtraInfo);
 
-        private const int MOUSEEVENTF_LEFTDOWN = 0x02;
-        private const int MOUSEEVENTF_LEFTUP = 0x04;
-        private const int MOUSEEVENTF_RIGHTDOWN = 0x08;
-        private const int MOUSEEVENTF_RIGHTUP = 0x10;
-        private const int MOUSEEVENTF_MIDDLEDOWN = 0x20;
-        private const int MOUSEEVENTF_MIDDLEUP = 0x40;
+        private const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
+        private const uint MOUSEEVENTF_LEFTUP = 0x0004;
+        private const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
+        private const uint MOUSEEVENTF_RIGHTUP = 0x0010;
+        private const uint MOUSEEVENTF_MIDDLEDOWN = 0x0020;
+        private const uint MOUSEEVENTF_MIDDLEUP = 0x0040;
+        
+        private const uint MOUSEEVENTF_MOVE = 0x0001;
+        private const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
 
-        private const int KEYEVENTF_KEYUP = 0x0002;
+        private const uint KEYEVENTF_KEYUP = 0x0002;
 
         public void ProcessInput(InputEventDto input)
         {
+            // Normalize Input (0.0 - 1.0) -> Absolute (0 - 65535)
+            // This is DPI/Resolution Independent!
+            uint absX = (uint)(input.X * 65535);
+            uint absY = (uint)(input.Y * 65535);
+
             switch (input.Type)
             {
                 case InputType.MouseMove:
-                    SetCursorPos(input.X, input.Y);
+                    mouse_event(MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE, absX, absY, 0, 0);
                     break;
                     
                 case InputType.MouseDown:
-                    switch (input.Button)
-                    {
-                        case 0: mouse_event(MOUSEEVENTF_LEFTDOWN, input.X, input.Y, 0, 0); break;
-                        case 1: mouse_event(MOUSEEVENTF_RIGHTDOWN, input.X, input.Y, 0, 0); break;
-                        case 2: mouse_event(MOUSEEVENTF_MIDDLEDOWN, input.X, input.Y, 0, 0); break;
-                    }
+                    // Move cursor first
+                     mouse_event(MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE, absX, absY, 0, 0);
+                    if (input.Button == 0) mouse_event(MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_LEFTDOWN, absX, absY, 0, 0);
+                    if (input.Button == 1) mouse_event(MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_RIGHTDOWN, absX, absY, 0, 0);
+                    if (input.Button == 2) mouse_event(MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MIDDLEDOWN, absX, absY, 0, 0);
                     break;
 
                 case InputType.MouseUp:
-                    switch (input.Button)
-                    {
-                        case 0: mouse_event(MOUSEEVENTF_LEFTUP, input.X, input.Y, 0, 0); break;
-                        case 1: mouse_event(MOUSEEVENTF_RIGHTUP, input.X, input.Y, 0, 0); break;
-                        case 2: mouse_event(MOUSEEVENTF_MIDDLEUP, input.X, input.Y, 0, 0); break;
-                    }
+                    mouse_event(MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE, absX, absY, 0, 0);
+                    if (input.Button == 0) mouse_event(MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_LEFTUP, absX, absY, 0, 0);
+                    if (input.Button == 1) mouse_event(MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_RIGHTUP, absX, absY, 0, 0);
+                    if (input.Button == 2) mouse_event(MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MIDDLEUP, absX, absY, 0, 0);
                     break;
 
                 case InputType.KeyDown:

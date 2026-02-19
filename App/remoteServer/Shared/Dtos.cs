@@ -12,6 +12,19 @@ namespace Shared.DTO
     public class LoginResponseDto
     {
         public bool IsSuccess { get; set; }
+
+        public string Message { get; set; } = string.Empty;
+    }
+
+    public class RegisterRequestDto
+    {
+        public string Username { get; set; } = string.Empty;
+        public string PasswordHash { get; set; } = string.Empty;
+    }
+
+    public class RegisterResponseDto
+    {
+        public bool IsSuccess { get; set; }
         public string Message { get; set; } = string.Empty;
     }
 
@@ -28,8 +41,8 @@ namespace Shared.DTO
     public class InputEventDto
     {
         public InputType Type { get; set; }
-        public int X { get; set; }
-        public int Y { get; set; }
+        public float X { get; set; } // Normalized 0.0 - 1.0
+        public float Y { get; set; } // Normalized 0.0 - 1.0
         public int KeyCode { get; set; }
         public int Button { get; set; } // 0: Left, 1: Right, 2: Middle
     }
@@ -38,8 +51,12 @@ namespace Shared.DTO
     public class ScreenFrameDto
     {
         public byte[] ImageData { get; set; } = Array.Empty<byte>();
-        public int Width { get; set; }
-        public int Height { get; set; }
+        public int Width { get; set; }  // Chunk Width
+        public int Height { get; set; } // Chunk Height
+        public int Left { get; set; }   // Chunk X
+        public int Top { get; set; }    // Chunk Y
+        public int TotalWidth { get; set; }  // Full Screen Width
+        public int TotalHeight { get; set; } // Full Screen Height
         public long Timestamp { get; set; }
     }
 
@@ -63,5 +80,11 @@ namespace Shared.DTO
     {
         public byte[] EncryptedAesKey { get; set; } = Array.Empty<byte>();
         public byte[] EncryptedAesIV { get; set; } = Array.Empty<byte>();
+    }
+
+    public class ResolutionRequestDto
+    {
+        public int Width { get; set; }
+        public int Height { get; set; }
     }
 }
