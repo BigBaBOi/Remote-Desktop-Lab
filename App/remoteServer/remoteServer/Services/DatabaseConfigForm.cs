@@ -129,8 +129,8 @@ namespace remoteServer.Services
                 string configPath = AppDomain.CurrentDomain.BaseDirectory + "db_config.txt";
                 File.WriteAllText(configPath, connStr);
 
-                // Reload Service (async friendly)
-                await Task.Run(() => DatabaseService.ReloadConnectionString());
+                // Reload Service (compat wrapper)
+                DatabaseService.ReloadConnectionString();
 
                 MessageBox.Show("Đã lưu cấu hình và kết nối thành công!", "Thành công", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 Close();

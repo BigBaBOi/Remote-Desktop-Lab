@@ -17,29 +17,95 @@ namespace remoteServer.Services
         private static bool _isInitialized = false;
         private static readonly object _lock = new object();
 
-        // Cờ báo hiệu Database có hoạt động hay không (để tránh thử lại liên tục nếu sập)
-        public static bool IsDatabaseAvailable { get; private set; } = false;
+        private static bool _isDatabaseAvailable = false;
+        public static bool IsDatabaseAvailable
+        {
+            get => _isDatabaseAvailable;
+            private set
+            {
+                if (_isDatabaseAvailable != value)
+                {
+                    _isDatabaseAvailable = value;
+                    OnDatabaseStatusChanged?.Invoke(value);
+                }
+            }
+        }
 
+        public static event Action<bool>? OnDatabaseStatusChanged;
+
+        public static async Task ReloadConnectionStringAsync()
+        {
+            _isInitialized = false;
+            _connectionString = "";
+            await InitializeAsync();
+        }
+
+        // Compatibility wrapper used by UI code
         public static void ReloadConnectionString()
         {
-            lock (_lock)
-            {
-                _isInitialized = false;
-                _connectionString = "";
-                // Khởi tạo lại
-                new DatabaseService();
-            }
+            _isInitialized = false;
+            _connectionString = "";
+            // Fire-and-forget reinitialize
+            _ = InitializeAsync();
         }
 
         public DatabaseService()
         {
-            InitializeConnectionString();
+            // Không khởi tạo tự động trong constructor nữa
+        }
+
+        public static async Task InitializeAsync()
+        {
+            if (_isInitialized) return;
+            await Task.Run(() => InitializeConnectionString());
+            StartConnectionMonitor();
+        }
+
+        private static void StartConnectionMonitor()
+        {
+            Task.Run(async () =>
+            {
+                int delayMs = 5000;
+                while (true)
+                {
+                    if (!IsDatabaseAvailable && _isInitialized && !string.IsNullOrEmpty(_connectionString))
+                    {
+                        Shared.Utils.Logger.Log($"[DB] Đang thử kết nối lại với MySQL (delay {delayMs}ms)...");
+                        await Task.Delay(delayMs);
+                        bool isOk = TestConnection(_connectionString);
+                        if (isOk)
+                        {
+                            IsDatabaseAvailable = true;
+                            Shared.Utils.Logger.Log("[DB] Kết nối lại MySQL thành công.");
+                            delayMs = 5000; // Reset delay
+                        }
+                        else
+                        {
+                            delayMs = Math.Min(delayMs * 2, 60000); // Backoff tối đa 60s
+                        }
+                    }
+                    else if (IsDatabaseAvailable)
+                    {
+                        await Task.Delay(20000); // Kiểm tra mỗi 20s
+                        bool isOk = TestConnection(_connectionString);
+                        if (!isOk)
+                        {
+                            IsDatabaseAvailable = false;
+                            Shared.Utils.Logger.Log("[DB] Mất kết nối MySQL.");
+                        }
+                    }
+                    else
+                    {
+                        await Task.Delay(5000);
+                    }
+                }
+            });
         }
 
         /// <summary>
         /// Khởi tạo chuỗi kết nối. Thử nhiều phương án (Local, SQLEXPRESS, IP...) để tìm Server.
         /// </summary>
-        private void InitializeConnectionString()
+        private static void InitializeConnectionString()
         {
             if (_isInitialized) return;
 
@@ -86,7 +152,7 @@ namespace remoteServer.Services
             }
         }
 
-        private bool TestConnection(string connStr)
+        private static bool TestConnection(string connStr)
         {
             try
             {

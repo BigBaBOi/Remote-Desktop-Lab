@@ -19,7 +19,7 @@ namespace remoteClient
         #region Fields
 
         private ClientConnection _connection;
-        
+
         // UI Controls (được tạo dynamically)
         private TextBox txtIp;
         private TextBox txtUser;
@@ -27,7 +27,8 @@ namespace remoteClient
         private Button btnConnect;
         private Label lblStatus;
         private PictureBox pbScreen; // Hiển thị màn hình remote
-        
+        private ProgressBar pbTransfer; // Hiển thị tiến độ file
+
         // Screen & Rendering State
         private int _serverWidth;
         private int _serverHeight;
@@ -43,9 +44,9 @@ namespace remoteClient
             InitializeComponent();
             SetupUI();
             this.KeyPreview = true; // Cho phép Form bắt sự kiện phím trước khi Control con xử lý
-            
+
             _connection = new ClientConnection();
-            
+
             // Đăng ký sự kiện từ Connection
             _connection.OnError += (msg) => Invoke(new Action(() => lblStatus.Text = "Lỗi: " + msg));
             _connection.OnPacketReceived += OnPacketReceived;
@@ -61,12 +62,12 @@ namespace remoteClient
 
             // Panel chứa các control kết nối (Top Bar)
             var panelControl = new Panel { Parent = this, Dock = DockStyle.Top, Height = 60, Padding = new Padding(5) };
-            
+
             // Dùng FlowLayoutPanel để tự động sắp xếp control (Fix lỗi giao diện trên màn hình High DPI)
-            var flowLayout = new FlowLayoutPanel 
-            { 
-                Parent = panelControl, 
-                Dock = DockStyle.Fill, 
+            var flowLayout = new FlowLayoutPanel
+            {
+                Parent = panelControl,
+                Dock = DockStyle.Fill,
                 FlowDirection = FlowDirection.LeftToRight,
                 AutoSize = false,
                 WrapContents = false,
@@ -76,31 +77,34 @@ namespace remoteClient
             // Tạo các Label và TextBox
             var lblIp = new Label { Parent = flowLayout, Text = "IP:", AutoSize = true, Margin = new Padding(5, 5, 0, 5) };
             txtIp = new TextBox { Parent = flowLayout, Text = "192.168.1.135", Width = 120, Margin = new Padding(0, 3, 10, 3) };
-            
+
             var lblUser = new Label { Parent = flowLayout, Text = "User:", AutoSize = true, Margin = new Padding(0, 5, 0, 5) };
             txtUser = new TextBox { Parent = flowLayout, Text = "admin", Width = 100, Margin = new Padding(0, 3, 10, 3) };
-            
+
             var lblPass = new Label { Parent = flowLayout, Text = "Pass:", AutoSize = true, Margin = new Padding(0, 5, 0, 5) };
             txtPass = new TextBox { Parent = flowLayout, Text = "admin123", Width = 100, PasswordChar = '*', Margin = new Padding(0, 3, 10, 3) };
-            
+
             // Tạo các Button chức năng
             btnConnect = new Button { Parent = flowLayout, Text = "Kết nối", AutoSize = true, Cursor = Cursors.Hand, Margin = new Padding(0, 0, 10, 0) };
             var btnSendFile = new Button { Parent = flowLayout, Text = "Gửi File", AutoSize = true, Enabled = false, Cursor = Cursors.Hand, Margin = new Padding(0, 0, 10, 0) };
             lblStatus = new Label { Parent = flowLayout, Text = "Sẵn sàng", AutoSize = true, ForeColor = Color.Blue, Margin = new Padding(0, 5, 0, 5) };
 
+            // Thêm ProgressBar
+            pbTransfer = new ProgressBar { Parent = flowLayout, Width = 150, Height = 20, Margin = new Padding(10, 3, 0, 3), Visible = false };
+
             // PictureBox hiển thị màn hình Remote
-            pbScreen = new PictureBox 
-            { 
-                Parent = this, 
-                Dock = DockStyle.Fill, 
-                BackColor = Color.Black, 
+            pbScreen = new PictureBox
+            {
+                Parent = this,
+                Dock = DockStyle.Fill,
+                BackColor = Color.Black,
                 SizeMode = PictureBoxSizeMode.Zoom // Zoom để hiển thị toàn bộ màn hình Server trong Client
             };
 
             // QUAN TRỌNG: Đưa Panel kết nối lên lớp trên cùng để không bị PictureBox che mất
             panelControl.BringToFront();
             pbScreen.SendToBack(); // Đảm bảo PictureBox nằm dưới cùng để Dock.Fill hoạt động đúng với Panel Dock.Top 
-            
+
             // Đăng ký các sự kiện chuột/phím để gửi thao tác lên Server
             pbScreen.MouseMove += PbScreen_MouseMove;
             pbScreen.MouseDown += PbScreen_MouseDown;
@@ -125,22 +129,52 @@ namespace remoteClient
             // Nếu chưa kết nối -> Thực hiện kết nối mới
             if (!_connection.IsConnected)
             {
-                bool connected = await _connection.ConnectAsync(txtIp.Text, 8888);
+                int maxRetries = 3;
+                bool connected = false;
+
+                for (int i = 0; i < maxRetries; i++)
+                {
+                    lblStatus.Text = $"Đang kết nối... (Thử lại {i + 1}/{maxRetries})";
+                    connected = await _connection.ConnectAsync(txtIp.Text, 8888);
+
+                    if (connected)
+                    {
+                        lblStatus.Text = "Đã kết nối TCP. Đang thực hiện Handshake...";
+
+                        // Chờ Handshake xong với timeout 10 giây
+                        var handshakeTask = _connection.HandshakeComplete;
+                        var timeoutTask = Task.Delay(10000);
+
+                        var completedTask = await Task.WhenAny(handshakeTask, timeoutTask);
+                        if (completedTask == handshakeTask && handshakeTask.Status == TaskStatus.RanToCompletion)
+                        {
+                            break; // Handshake thành công
+                        }
+
+                        // Handshake timeout hoặc lỗi -> Ngắt kết nối và thử lại
+                        _connection.Disconnect();
+                        connected = false;
+                    }
+
+                    if (!connected && i < maxRetries - 1)
+                    {
+                        lblStatus.Text = $"Kết nối/Handshake lỗi. Chờ 2s để thử lại...";
+                        await Task.Delay(2000); // Backoff 2s
+                    }
+                }
+
                 if (!connected)
                 {
-                    lblStatus.Text = "Lỗi kết nối Server. Vui lòng kiểm tra IP/Firewall.";
+                    lblStatus.Text = "Lỗi kết nối Server sau nhiều lần thử. Vui lòng kiểm tra IP/Firewall.";
                     btnConnect.Enabled = true;
                     return;
                 }
-                lblStatus.Text = "Đã kết nối TCP. Đang thực hiện Handshake...";
-                // Chờ Handshake xong để đảm bảo kênh truyền đã được mã hóa
-                await _connection.HandshakeComplete;
             }
-            
+
             // Khi đã kết nối an toàn -> Gửi yêu cầu đăng nhập
             lblStatus.Text = "Đang đăng nhập...";
             SendLogin();
-            
+
             // Mở khóa các tính năng khác
             // Lưu ý: btnSendFile chỉ nên enable khi đăng nhập thành công, 
             // nhưng tạm thời enable ở đây để user thấy phản hồi.
@@ -154,8 +188,17 @@ namespace remoteClient
                 if (ofd.ShowDialog() == DialogResult.OK)
                 {
                     lblStatus.Text = $"Đang gửi {Path.GetFileName(ofd.FileName)}...";
+                    pbTransfer.Visible = true;
+                    pbTransfer.Value = 0;
+
+                    // Vì SendFileAsync ở ClientConnection không báo progress (chỉ Server mới có event progress)
+                    // Ta chỉ có thể chờ hoàn tất, nếu không thì phải sửa ClientConnection.SendFileAsync
                     await _connection.SendFileAsync(ofd.FileName);
+
                     lblStatus.Text = "Gửi file hoàn tất!";
+                    pbTransfer.Value = 100;
+                    await Task.Delay(2000);
+                    pbTransfer.Visible = false;
                 }
             }
         }
@@ -211,7 +254,7 @@ namespace remoteClient
         private void Client_KeyUp(object sender, KeyEventArgs e)
         {
             SendInput(InputType.KeyUp, 0, 0, (int)e.KeyCode, 0);
-             e.Handled = true;
+            e.Handled = true;
         }
 
         #endregion
@@ -283,11 +326,11 @@ namespace remoteClient
             var response = SerializationHelper.Deserialize<LoginResponseDto>(payload);
             lblStatus.Text = response.IsSuccess ? "Đăng nhập thành công! Bắt đầu nhận màn hình..." : "Lỗi đăng nhập: " + response.Message;
             btnConnect.Enabled = !response.IsSuccess; // Nếu thất bại thì cho phép thử lại
-            
-            if (response.IsSuccess) 
+
+            if (response.IsSuccess)
             {
                 // Focus vào PictureBox để bắt đầu nhận sự kiện bàn phím ngay
-                pbScreen.Focus(); 
+                pbScreen.Focus();
                 // Kích hoạt nút gửi file
                 foreach (Control c in pbScreen.Parent.Controls) // Tìm nút SendFile trong Panel (cách này hơi hack)
                 {
@@ -295,11 +338,11 @@ namespace remoteClient
                     {
                         foreach (Control pc in p.Controls)
                         {
-                            if (pc is FlowLayoutPanel flp) 
+                            if (pc is FlowLayoutPanel flp)
                             {
-                                foreach(Control fc in flp.Controls)
+                                foreach (Control fc in flp.Controls)
                                 {
-                                    if(fc is Button b && b.Text == "Gửi File") b.Enabled = true;
+                                    if (fc is Button b && b.Text == "Gửi File") b.Enabled = true;
                                 }
                             }
                         }
@@ -331,7 +374,7 @@ namespace remoteClient
                 using (var ms = new MemoryStream(screenDto.ImageData))
                 {
                     var chunk = Image.FromStream(ms);
-                    
+
                     // 1. Xác định kích thước thực (Server gửi TotalW/H)
                     int totalW = screenDto.TotalWidth > 0 ? screenDto.TotalWidth : screenDto.Width;
                     int totalH = screenDto.TotalHeight > 0 ? screenDto.TotalHeight : screenDto.Height;
@@ -354,9 +397,9 @@ namespace remoteClient
                     {
                         pbScreen.Image = _backBuffer;
                     }
-                    
+
                     // Yêu cầu vẽ lại UI (Async)
-                    pbScreen.Invalidate(); 
+                    pbScreen.Invalidate();
 
                     // Cập nhật thông tin kích thước để dùng cho tính toán Input
                     _serverWidth = totalW;
@@ -371,21 +414,35 @@ namespace remoteClient
             if (chunkDto != null)
             {
                 // Chạy IO trên Thread khác để không block UI
-                await Task.Run(async () => {
+                await Task.Run(async () =>
+                {
                     string saveDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ReceivedFiles");
                     Directory.CreateDirectory(saveDir);
                     string filePath = Path.Combine(saveDir, chunkDto.FileName);
-                    
+
                     using (var fs = new FileStream(filePath, chunkDto.ChunkIndex == 0 ? FileMode.Create : FileMode.Append, FileAccess.Write))
                     {
                         await fs.WriteAsync(chunkDto.Data, 0, chunkDto.Data.Length);
                     }
 
+                    // Cập nhật ProgressBar trên UI thread
+                    long currentSize = new FileInfo(filePath).Length;
+                    int percent = chunkDto.FileSize > 0 ? (int)(currentSize * 100 / chunkDto.FileSize) : 0;
+
+                    Invoke(new Action(() =>
+                    {
+                        if (!pbTransfer.Visible) pbTransfer.Visible = true;
+                        pbTransfer.Value = Math.Min(100, Math.Max(0, percent));
+                        lblStatus.Text = $"Đang nhận: {chunkDto.FileName} ({percent}%)";
+                    }));
+
                     if (chunkDto.IsLastChunk)
                     {
-                        Invoke(new Action(() => {
+                        Invoke(new Action(() =>
+                        {
+                            pbTransfer.Visible = false;
                             MessageBox.Show($"Đã nhận file từ Server:\n{filePath}", "Nhận File", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                            lblStatus.Text = $"Đã nhận file: {chunkDto.FileName}";
+                            lblStatus.Text = $"Đã nhận xong: {chunkDto.FileName}";
                             // Mở thư mục chứa file
                             System.Diagnostics.Process.Start("explorer.exe", saveDir);
                         }));
@@ -406,15 +463,15 @@ namespace remoteClient
         private Rectangle GetImageDisplayRectangle(PictureBox pb)
         {
             if (pb.Image == null) return new Rectangle(0, 0, pb.Width, pb.Height);
-            
+
             Size imgSize = pb.Image.Size;
             Size pbSize = pb.ClientSize;
-            
+
             float ratioImg = (float)imgSize.Width / imgSize.Height;
             float ratioPb = (float)pbSize.Width / pbSize.Height;
-            
+
             int w, h, x, y;
-            
+
             if (ratioImg > ratioPb) // Ảnh rộng hơn so với khung -> Fit Width, có viền trên/dưới
             {
                 w = pbSize.Width;
@@ -429,7 +486,7 @@ namespace remoteClient
                 y = 0;
                 x = (pbSize.Width - w) / 2;
             }
-            
+
             return new Rectangle(x, y, w, h);
         }
 

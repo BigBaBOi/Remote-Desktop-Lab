@@ -13,6 +13,7 @@ using Shared.Security;
 using Shared.Utils;
 using remoteServer.Services;
 using System.Threading;
+using System.Collections.Concurrent;
 
 namespace remoteServer.Network
 {
@@ -36,6 +37,9 @@ namespace remoteServer.Network
         private int _sessionId = -1; // ID log trong Database
         private CancellationTokenSource _cts; // Token để hủy các luồng chạy nền
 
+        // Username (được thiết lập khi đăng nhập thành công)
+        private string _username = "(unknown)";
+
         // Encryption (Bảo mật - Mã hóa)
         private string _rsaPublicKey;
         private string _rsaPrivateKey;
@@ -50,11 +54,30 @@ namespace remoteServer.Network
         // Thread Safety (Khóa luồng)
         private readonly System.Threading.SemaphoreSlim _streamLock = new System.Threading.SemaphoreSlim(1, 1);
 
+        // File transfer tracking (progress events)
+        // File transfer tracking (progress events)
+        // filename -> bytes received so far (server receiving from client)
+        private readonly ConcurrentDictionary<string, long> _receiveProgress = new ConcurrentDictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+
+        // Quản lý các FileAck đang đợi
+        private readonly ConcurrentDictionary<string, TaskCompletionSource<FileAckDto>> _pendingFileAcks = new ConcurrentDictionary<string, TaskCompletionSource<FileAckDto>>();
+
+        #endregion
+
+        #region Events
+
+        // Event when server is sending a file to the client: (fileName, bytesSent, totalBytes)
+        public event Action<string, long, long>? OnFileSendProgress;
+
+        // Event when server receives file chunks from client: (fileName, bytesReceived, totalBytes)
+        public event Action<string, long, long>? OnFileReceiveProgress;
+
         #endregion
 
         #region Properties (Thuộc tính)
 
-        public string ClientInfo => _clientIp + (_isAuthenticated ? " (Đã đăng nhập)" : " (Khách)");
+        public string ClientInfo => $"{_username} {_clientIp} " + (_isAuthenticated ? "(Đã đăng nhập)" : "(Khách)");
+        public string Username => _username;
 
         #endregion
 
@@ -129,7 +152,17 @@ namespace remoteServer.Network
                 // 2. Gửi RSA Public Key cho Client để bắt đầu Handshake E2E (Mã hóa ứng dụng)
                 await SendPublicKeyAsync();
 
-                // 3. Vòng lặp nhận Packet từ Client
+                // 3. Timeout cho quá trình Handshake & Login (10 giây)
+                _ = Task.Delay(10000, _cts.Token).ContinueWith(t =>
+                {
+                    if (!_isAuthenticated && _client.Connected && !_cts.IsCancellationRequested)
+                    {
+                        Logger.Log($"[Bảo mật] ({_clientIp}) Quá thời gian Handshake/Login (10s). Đóng kết nối.");
+                        CleanupSession(); // Trigger ngắt kết nối
+                    }
+                });
+
+                // 4. Vòng lặp nhận Packet từ Client
                 while (_client.Connected && !_cts.Token.IsCancellationRequested)
                 {
                     // Đọc Header (Cố định kích thước struct PacketHeader)
@@ -235,6 +268,18 @@ namespace remoteServer.Network
                     }
                     break;
 
+                case PacketType.FileMeta:
+                    await HandleFileMeta(payload);
+                    break;
+
+                case PacketType.FileAck:
+                    var ackDto = SerializationHelper.Deserialize<FileAckDto>(payload);
+                    if (ackDto != null && _pendingFileAcks.TryGetValue(ackDto.FileId, out var tcs))
+                    {
+                        tcs.TrySetResult(ackDto);
+                    }
+                    break;
+
                 case PacketType.FileChunk:
                     // Nhận một phần file gửi lên
                     await HandleFileChunk(payload);
@@ -269,6 +314,7 @@ namespace remoteServer.Network
                     if (loginSuccess)
                     {
                         _isAuthenticated = true;
+                        _username = loginDto.Username ?? _username;
                         string clientIp = _clientIp;
 
                         // Ghi log phiên làm việc (Async/Fire-and-forget hoặc await nhanh)
@@ -327,6 +373,53 @@ namespace remoteServer.Network
             await SendPacketAsync(PacketType.RegisterResponse, SerializationHelper.Serialize(regResponse));
         }
 
+        private async Task HandleFileMeta(byte[] payload)
+        {
+            if (!_isAuthenticated) return;
+            var metaDto = SerializationHelper.Deserialize<FileMetaDto>(payload);
+            if (metaDto == null) return;
+
+            string saveDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ReceivedFiles");
+            Directory.CreateDirectory(saveDir);
+
+            // Dùng extension .part để đánh dấu file đang tải dở
+            string filePath = Path.Combine(saveDir, metaDto.FileName + ".part");
+            long existingSize = 0;
+            if (File.Exists(filePath))
+            {
+                existingSize = new FileInfo(filePath).Length;
+            }
+
+            int lastChunkIndex = -1; // -1 nghĩa là chưa nhận được chunk nào
+            if (existingSize > 0 && metaDto.ChunkSize > 0)
+            {
+                lastChunkIndex = (int)(existingSize / metaDto.ChunkSize) - 1;
+                // Nếu file size không chia hết cho chunk size, file bị lỗi hoặc cắt dở chunk cuối
+                // An toàn nhất là resume từ chunk nguyên vẹn cuối cùng
+                long validBytes = (lastChunkIndex + 1) * metaDto.ChunkSize;
+                using (var fs = new FileStream(filePath, FileMode.Open, FileAccess.Write))
+                {
+                    fs.SetLength(validBytes); // Cắt bỏ phần dư thừa nếu tải dở chunk
+                }
+            }
+
+            bool isComplete = false;
+            if (existingSize >= metaDto.TotalSize)
+            {
+                isComplete = true; // Đã tải xong từ trước
+            }
+
+            var ackDto = new FileAckDto
+            {
+                FileId = metaDto.FileId,
+                LastReceivedChunkIndex = lastChunkIndex,
+                IsComplete = isComplete
+            };
+
+            await SendPacketAsync(PacketType.FileAck, SerializationHelper.Serialize(ackDto));
+            Logger.Log($"[File] Chuẩn bị nhận: {metaDto.FileName}. Báo cho client resume từ index: {lastChunkIndex}");
+        }
+
         private async Task HandleFileChunk(byte[] payload)
         {
             if (!_isAuthenticated) return;
@@ -337,17 +430,29 @@ namespace remoteServer.Network
                 // Thư mục lưu file nhận được
                 string saveDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ReceivedFiles");
                 Directory.CreateDirectory(saveDir);
-                string filePath = Path.Combine(saveDir, chunkDto.FileName);
+                string partPath = Path.Combine(saveDir, chunkDto.FileName + ".part");
+                string finalPath = Path.Combine(saveDir, chunkDto.FileName);
 
                 // Ghi dữ liệu vào file (Append - Nối tiếp)
-                using (var fs = new FileStream(filePath, chunkDto.ChunkIndex == 0 ? FileMode.Create : FileMode.Append, FileAccess.Write))
+                // Lấy FileMode OpenOrCreate (không FileMode.Create để không xóa mất phần cũ)
+                using (var fs = new FileStream(partPath, FileMode.OpenOrCreate, FileAccess.Write))
                 {
+                    // Seek explicitly to ensure we append strictly at the end, just in case
+                    fs.Seek(0, SeekOrigin.End);
                     await fs.WriteAsync(chunkDto.Data, 0, chunkDto.Data.Length);
                 }
 
-                if (chunkDto.IsLastChunk)
+                // Cập nhật progress nhận file
+                long currentSize = new FileInfo(partPath).Length;
+                _receiveProgress.AddOrUpdate(chunkDto.FileName, currentSize, (k, v) => currentSize);
+                OnFileReceiveProgress?.Invoke(chunkDto.FileName, currentSize, chunkDto.FileSize);
+
+                if (chunkDto.IsLastChunk || currentSize >= chunkDto.FileSize)
                 {
-                    Logger.Log($"[File] Đã nhận xong: {chunkDto.FileName} ({chunkDto.FileSize} bytes)");
+                    // Đổi tên file từ .part sang file gốc
+                    if (File.Exists(finalPath)) File.Delete(finalPath);
+                    File.Move(partPath, finalPath);
+                    Logger.Log($"[File] Đã nhận xong và lưu: {chunkDto.FileName} ({chunkDto.FileSize} bytes)");
                 }
             }
         }
@@ -403,7 +508,7 @@ namespace remoteServer.Network
         }
 
         /// <summary>
-        /// Gửi một file từ Server đến Client.
+        /// Gửi một file từ Server đến Client với hỗ trợ Resume.
         /// </summary>
         public async Task SendFileAsync(string filePath)
         {
@@ -414,32 +519,80 @@ namespace remoteServer.Network
                 string fileName = Path.GetFileName(filePath);
                 long fileSize = new FileInfo(filePath).Length;
                 int chunkSize = 4096; // 4KB mỗi gói
-                byte[] buffer = new byte[chunkSize];
-                int chunkIndex = 0;
+                int totalChunks = (int)Math.Ceiling((double)fileSize / chunkSize);
+                string fileId = Guid.NewGuid().ToString();
+
+                var metaDto = new FileMetaDto
+                {
+                    FileId = fileId,
+                    FileName = fileName,
+                    TotalSize = fileSize,
+                    ChunkSize = chunkSize,
+                    TotalChunks = totalChunks,
+                    Checksum = ""
+                };
+
+                var ackTcs = new TaskCompletionSource<FileAckDto>();
+                _pendingFileAcks.TryAdd(fileId, ackTcs);
+
+                await SendPacketAsync(PacketType.FileMeta, SerializationHelper.Serialize(metaDto));
+
+                // Bọc Task.Delay vào một task wait và kiểm tra timeout
+                var timeoutTask = Task.Delay(30000); // 30s timeout cho Ack
+                var completedTask = await Task.WhenAny(ackTcs.Task, timeoutTask);
+
+                _pendingFileAcks.TryRemove(fileId, out _);
+
+                if (completedTask != ackTcs.Task)
+                {
+                    Logger.Log($"[Lỗi] Gửi file: Timeout không nhận được phản hồi FileAck từ Client.");
+                    return;
+                }
+
+                var ack = ackTcs.Task.Result;
+                if (ack.IsComplete)
+                {
+                    Logger.Log($"[File] Gửi bị hủy do Client báo file đã tải xong từ trước.");
+                    return;
+                }
+
+                int startChunkIndex = ack.LastReceivedChunkIndex + 1;
 
                 using (FileStream fs = new FileStream(filePath, FileMode.Open, FileAccess.Read))
                 {
+                    long startPosition = (long)startChunkIndex * chunkSize;
+                    if (startPosition < fileSize)
+                    {
+                        fs.Seek(startPosition, SeekOrigin.Begin);
+                    }
+
+                    byte[] buffer = new byte[chunkSize];
+                    int chunkIndex = startChunkIndex;
                     int bytesRead;
+                    long bytesSent = startPosition;
+
                     while ((bytesRead = await fs.ReadAsync(buffer, 0, buffer.Length)) > 0)
                     {
                         var chunkDto = new FileChunkDto
                         {
+                            FileId = fileId,
                             FileName = fileName,
                             FileSize = fileSize,
                             ChunkIndex = chunkIndex++,
                             IsLastChunk = (fs.Position == fileSize),
                             Data = new byte[bytesRead]
                         };
-                        // Copy dữ liệu thực vào mảng đích
                         Array.Copy(buffer, chunkDto.Data, bytesRead);
 
                         await SendPacketAsync(PacketType.FileChunk, SerializationHelper.Serialize(chunkDto));
 
-                        // Nghỉ một xíu sau mỗi 10 gói để tránh nghẽn mạng
+                        bytesSent += bytesRead;
+                        OnFileSendProgress?.Invoke(fileName, bytesSent, fileSize);
+
                         if (chunkIndex % 10 == 0) await Task.Delay(10);
                     }
                 }
-                Logger.Log($"[File] Đã gửi: {fileName} -> Client");
+                Logger.Log($"[File] Đã gửi xong: {fileName} -> {_clientIp}");
             }
             catch (Exception ex)
             {

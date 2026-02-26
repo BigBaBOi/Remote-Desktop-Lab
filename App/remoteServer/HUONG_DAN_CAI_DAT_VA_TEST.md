@@ -26,7 +26,7 @@ Trước khi bắt đầu, đảm bảo máy tính của bạn đã cài đặt:
 
 **Bước 2:** Chạy Script tạo Database.
 
-- Tìm đến thư mục source code, copy nội dung của file cấu hình: `Remote-Desktop-Lab\App\remoteServer\remoteServer\setup_database.sql`
+- Tìm đến thư mục source code, copy nội dung của file cấu hình: `Remote-Desktop-Lab\App\remoteServer\Data\setup_database.sql`
 - Hoặc copy nội dung dưới đây và dán vào cửa sổ **SQL Query** của công cụ quản lý:
 
 ```sql

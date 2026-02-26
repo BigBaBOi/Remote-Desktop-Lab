@@ -15,42 +15,42 @@ Tập hợp các việc cần làm (ưu tiên) dựa trên `README.md` và `HUON
   - [x] Tìm và chuyển mọi `Console.WriteLine`/`Console.Write` sang logging file hoặc MessageBox tùy ngữ cảnh.
 
 ## P1 - Server / DB
-- [ ] Cải thiện `DatabaseService`.
-  - [ ] Tách khởi tạo khỏi constructor UI: tạo phương thức `InitializeAsync()` thay vì `new DatabaseService()` trong UI thread.
-  - [ ] Triển khai cơ chế retry/backoff (exponential backoff) để tự phục hồi `IsDatabaseAvailable` khi MySQL tái khởi động.
-  - [ ] Ghi log lỗi kết nối vào file `Logs/server.log` (với rolling file hoặc append đơn giản).
-  - [ ] Thêm trạng thái trong UI (icon/label) hiển thị `Database: Online/Offline` và thời gian kiểm tra cuối cùng.
-- [ ] Thêm script cài DB `setup_database.sql` vào thư mục `Data` và cập nhật README nếu cần.
-  - [ ] Kiểm tra script hiện tại (`setup_database.sql`) tồn tại và copy vào `remoteServer/Data/setup_database.sql`.
-  - [ ] Cập nhật `HUONG_DAN_CAI_DAT_VA_TEST.md` để tham chiếu đúng đường dẫn script.
+- [x] Cải thiện `DatabaseService`.
+  - [x] Tách khởi tạo khỏi constructor UI: tạo phương thức `InitializeAsync()` thay vì `new DatabaseService()` trong UI thread.
+  - [x] Triển khai cơ chế retry/backoff (exponential backoff) để tự phục hồi `IsDatabaseAvailable` khi MySQL tái khởi động.
+  - [x] Ghi log lỗi kết nối vào file `Logs/server.log` (với rolling file hoặc append đơn giản).
+  - [x] Thêm trạng thái trong UI (icon/label) hiển thị `Database: Online/Offline` và thời gian kiểm tra cuối cùng.
+- [x] Thêm script cài DB `setup_database.sql` vào thư mục `Data` và cập nhật README nếu cần.
+  - [x] Kiểm tra script hiện tại (`setup_database.sql`) tồn tại và copy vào `remoteServer/Data/setup_database.sql`.
+  - [x] Cập nhật `HUONG_DAN_CAI_DAT_VA_TEST.md` để tham chiếu đúng đường dẫn script.
 
 ## P1 - UI / UX
-- [ ] Sửa `ListBox` hiển thị client.
-  - [ ] Override `ClientSession.ToString()` để trả về `"{Username} ({ClientIP}) - {Status}"` hoặc
-  - [ ] Hoặc sử dụng `ListBox.DisplayMember` với wrapper object có thuộc tính hiển thị.
+- [x] Sửa `ListBox` hiển thị client.
+  - [x] Override `ClientSession.ToString()` để trả về `"{Username} ({ClientIP}) - {Status}"` hoặc
+  - [x] Hoặc sử dụng `ListBox.DisplayMember` với wrapper object có thuộc tính hiển thị.
 - [ ] Dọn dẹp các warning nullability trong dự án.
   - [ ] Chạy build, liệt kê warnings, và sửa từng cảnh báo theo ưu tiên (constructor, events, nullable fields).
 - [ ] Khi gửi/nhận file hiển thị progress.
-  - [ ] Thêm ProgressBar trên Server UI khi gửi file cho Client.
+  - [x] Thêm ProgressBar trên Server UI khi gửi file cho Client.
   - [ ] Thêm ProgressBar trên Client UI khi nhận file từ Server.
-  - [ ] Gửi `FileMeta`/`FileChunk` DTO có thông tin `TotalChunks`/`BytesSent` để UI cập nhật.
+  - [x] Gửi `FileMeta`/`FileChunk` DTO có thông tin `TotalChunks`/`BytesSent` để UI cập nhật.
 
 ## P2 - Network / Protocol
 - [ ] Viết unit test cho `PacketHeader` packing/unpacking.
   - [ ] Test trường hợp big-endian/little-endian và kích thước header.
-- [ ] Kiểm tra toàn bộ I/O mạng đảm bảo `async/await` (non-blocking).
-  - [ ] Audit `Read`/`Write` trong `ClientSession`, `ClientConnection`, `AsyncTcpListener`.
-  - [ ] Thay mọi blocking API bằng async equivalents.
-- [ ] Thêm timeout và retry cho handshake/login.
-  - [ ] Đặt timeout hợp lý (5s-10s) cho handshake;
-  - [ ] Nếu handshake thất bại, thực hiện tối đa N retry với backoff trước khi ngắt kết nối.
+- [x] Kiểm tra toàn bộ I/O mạng đảm bảo `async/await` (non-blocking).
+  - [x] Audit `Read`/`Write` trong `ClientSession`, `ClientConnection`, `AsyncTcpListener`.
+  - [x] Thay mọi blocking API bằng async equivalents.
+- [x] Thêm timeout và retry cho handshake/login.
+  - [x] Đặt timeout hợp lý (5s-10s) cho handshake;
+  - [x] Nếu handshake thất bại, thực hiện tối đa N retry với backoff trước khi ngắt kết nối.
 
 ## P2 - Security
-- [ ] Implement CA nội bộ (Server cấp cert tự ký bằng CA riêng).
-  - [ ] Tạo helper để khởi tạo CA key/cert và ghi ra `Data/certs`.
-  - [ ] Tạo và lưu TLS certificate của Server, dùng cho `SslStream` khi AuthenticateAsServer.
-- [ ] Cập nhật `CertificateHelper.ValidateServerCertificate`.
-  - [ ] Không bypass validation trong release; chỉ accept certs ký bởi CA nội bộ.
+- [x] Implement CA nội bộ (Server cấp cert tự ký bằng CA riêng).
+  - [x] Tạo helper để khởi tạo CA key/cert và ghi ra `Data/certs`.
+  - [x] Tạo và lưu TLS certificate của Server, dùng cho `SslStream` khi AuthenticateAsServer.
+- [x] Cập nhật `CertificateHelper.ValidateServerCertificate`.
+  - [x] Không bypass validation trong release; chỉ accept certs ký bởi CA nội bộ.
 - [ ] Thêm unit tests cho `SecurityHelper` (RSA/AES encrypt/decrypt).
   - [ ] Test encrypt->decrypt roundtrip for AES and RSA.
 
@@ -68,7 +68,7 @@ Tập hợp các việc cần làm (ưu tiên) dựa trên `README.md` và `HUON
 
 ## P4 - Nâng cao (tùy chọn)
 - [ ] Resume upload/download file khi gián đoạn.
-  - [ ] Thiết kế `FileMeta` DTO chứa `FileId`, `TotalSize`, `ChunkSize`, `Checksum`.
+  - [x] Thiết kế `FileMeta` DTO chứa `FileId`, `TotalSize`, `ChunkSize`, `Checksum`.
   - [ ] Hỗ trợ resume bằng `FileAck` với `LastReceivedChunkIndex`.
 - [ ] Thống kê lịch sử kết nối, xuất CSV.
   - [ ] Thêm UI export CSV, endpoint lưu trữ log lịch sử.

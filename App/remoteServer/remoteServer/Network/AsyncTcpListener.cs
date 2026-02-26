@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Threading.Tasks;
 using System.Security.Cryptography.X509Certificates;
 using Shared.Utils;
+using Shared.Security;
 using System.IO;
 using System.Windows.Forms;
 
@@ -37,11 +38,24 @@ namespace remoteServer.Network
         {
             // Đường dẫn file chứng chỉ
             string certPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "server.pfx");
+            string caCertPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "RemoteDesktopRootCA.cer");
 
-            // Nếu không tìm thấy ở thư mục chạy, thử tìm ở thư mục source (chỉ dùng cho môi trường Dev)
-            if (!File.Exists(certPath))
+            // Tự động tạo nếu không có chứng chỉ hoặc CA
+            if (!File.Exists(certPath) || !File.Exists(caCertPath))
             {
-                certPath = @"d:\Remote-Desktop-Lab\App\remoteServer\remoteServer\server.pfx";
+                Logger.Log("[SSL] Không tìm thấy chứng chỉ Server hoặc CA. Đang tự động tạo mới...");
+                try
+                {
+                    // Tạo Root CA
+                    var caCert = CAHelper.GenerateCACertificate(caCertPath);
+                    // Tạo Server Certificate từ Root CA
+                    CAHelper.GenerateServerCertificate(caCert, certPath, "password");
+                    Logger.Log("[SSL] Tự động tạo mới chứng chỉ thành công.");
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log($"[SSL] Lỗi khi tạo chứng chỉ tự động: {ex.Message}");
+                }
             }
 
             if (File.Exists(certPath))
@@ -58,7 +72,7 @@ namespace remoteServer.Network
             }
             else
             {
-                Logger.Log($"[SSL] Không tìm thấy file {certPath}. Server sẽ chạy ở chế độ KHÔNG BẢO MẬT.");
+                Logger.Log($"[SSL] Test/Lỗi: Vẫn không tìm thấy file {certPath}. Server sẽ chạy ở chế độ KHÔNG BẢO MẬT.");
             }
         }
 

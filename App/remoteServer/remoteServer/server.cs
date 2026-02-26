@@ -1,9 +1,9 @@
 using System;
 using System.Net;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 using remoteServer.Network;
 using remoteServer.Services;
+using System.Threading.Tasks;
 
 namespace remoteServer
 {
@@ -25,63 +25,40 @@ namespace remoteServer
         /// <summary>
         /// Sự kiện khi Form tải xong: Khởi động bộ lắng nghe kết nối (Listener) trên Port 8888.
         /// </summary>
-        private async void Server_Load(object sender, EventArgs e)
+        private void Server_Load(object sender, EventArgs e)
         {
+            // Initialize database service to detect availability and avoid console output
+            try
+            {
+                DatabaseService.ReloadConnectionString();
+                if (!DatabaseService.IsDatabaseAvailable)
+                {
+                    var result = MessageBox.Show("Không thể kết nối tới MySQL. Vui lòng kiểm tra dịch vụ MySQL đã được bật và cấu hình Database trong 'Cấu hình Database'.\n\nChọn 'Abort' để mở cấu hình hoặc 'Retry' để kiểm tra lại.",
+                        "Lỗi kết nối Database", MessageBoxButtons.AbortRetryIgnore, MessageBoxIcon.Warning);
+
+                    if (result == DialogResult.Abort)
+                    {
+                        // Open config
+                        new remoteServer.Services.DatabaseConfigForm().ShowDialog();
+                    }
+                    else if (result == DialogResult.Retry)
+                    {
+                        // Retry init asynchronously
+                        Task.Run(() => DatabaseService.ReloadConnectionString());
+                    }
+                    // Ignore -> continue offline
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Lỗi khi kiểm tra Database: {ex.Message}", "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+
             // Tự động bắt đầu lắng nghe khi mở ứng dụng
             _listener = new AsyncTcpListener(IPAddress.Any, 8888);
             _listener.OnClientConnected += OnClientConnected;
             _listener.Start();
             Text = "Remote Server Running on Port 8888";
-
-            // Kiểm tra kết nối CSDL bất đồng bộ (không block UI)
-            await CheckDatabaseConnectionAsync();
-        }
-
-        private async Task CheckDatabaseConnectionAsync()
-        {
-            try
-            {
-                // Khởi tạo DatabaseService trên luồng nền
-                await Task.Run(() => new DatabaseService());
-
-                if (!DatabaseService.IsDatabaseAvailable)
-                {
-                    Invoke(new Action(() => ShowDatabaseErrorWarning()));
-                }
-            }
-            catch (Exception ex)
-            {
-                Invoke(new Action(() => MessageBox.Show($"Lỗi khi kiểm tra Database: {ex.Message}", "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error)));
-            }
-        }
-
-        private void ShowDatabaseErrorWarning()
-        {
-            DialogResult result = MessageBox.Show(
-                "Không thể kết nối tới MySQL. Vui lòng kiểm tra dịch vụ MySQL đã được bật và cấu hình Database trong 'Cấu hình Database'.\n\nBạn có muốn mở bảng 'Cấu hình Database' không?\n- Chọn 'Yes' để mở Cấu hình.\n- Chọn 'No' để thử lại kết nối.\n- Chọn 'Cancel' để tiếp tục chạy chế độ Offline.",
-                "Lỗi kết nối MySQL",
-                MessageBoxButtons.YesNoCancel,
-                MessageBoxIcon.Warning);
-
-            if (result == DialogResult.Yes)
-            {
-                using (var configForm = new remoteServer.Services.DatabaseConfigForm())
-                {
-                    configForm.ShowDialog(this);
-                }
-                // Sau khi đóng cấu hình, thử kiểm tra lại
-                _ = CheckDatabaseConnectionAsync();
-            }
-            else if (result == DialogResult.No)
-            {
-                // Thử lại
-                _ = CheckDatabaseConnectionAsync();
-            }
-            else
-            {
-                // Cancel -> Chạy offline
-                Shared.Utils.Logger.Log("Người dùng chọn chạy chế độ Offline do lỗi MySQL.");
-            }
         }
 
         protected override void Dispose(bool disposing)
@@ -97,19 +74,29 @@ namespace remoteServer
         {
             this.components = new System.ComponentModel.Container();
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(500, 300); // Tăng kích thước form
+            this.ClientSize = new System.Drawing.Size(700, 360); // Increased width for details
             this.Text = "Server";
-
+            
             // Client List Box (Left Side)
             var lblClients = new Label { Text = "Danh sách Client:", Location = new System.Drawing.Point(10, 10), AutoSize = true };
             this.Controls.Add(lblClients);
 
-            _lstClients = new ListBox { Location = new System.Drawing.Point(10, 30), Size = new System.Drawing.Size(250, 200) };
+            _lstClients = new ListBox { Location = new System.Drawing.Point(10, 30), Size = new System.Drawing.Size(350, 260) };
             this.Controls.Add(_lstClients);
 
+            // DB Status Label
+            lblDbStatus = new Label { Text = "Database: Unknown", Location = new System.Drawing.Point(380, 10), AutoSize = true, ForeColor = System.Drawing.Color.DarkRed };
+            this.Controls.Add(lblDbStatus);
+
+            // Transfer progress label & bar
+            lblTransfer = new Label { Text = "Transfer:", Location = new System.Drawing.Point(380, 40), AutoSize = true };
+            this.Controls.Add(lblTransfer);
+            progressTransfer = new ProgressBar { Location = new System.Drawing.Point(380, 60), Size = new System.Drawing.Size(300, 25), Minimum = 0, Maximum = 100 };
+            this.Controls.Add(progressTransfer);
+
             // Right Side Buttons Panel
-            int btnX = 280;
-            int btnY = 30;
+            int btnX = 380;
+            int btnY = 100;
             int btnGap = 40;
 
             // Config Button
@@ -117,9 +104,11 @@ namespace remoteServer
             btnConfig.Text = "Cấu hình Database";
             btnConfig.AutoSize = true;
             btnConfig.Location = new System.Drawing.Point(btnX, btnY);
-            btnConfig.Click += (s, e) =>
-            {
+            btnConfig.Click += (s, e) => {
                 new remoteServer.Services.DatabaseConfigForm().ShowDialog();
+                // After closing config, reload connection string
+                Task.Run(() => DatabaseService.ReloadConnectionString());
+                UpdateDbStatusLabel();
             };
             this.Controls.Add(btnConfig);
 
@@ -128,8 +117,7 @@ namespace remoteServer
             btnOpenFiles.Text = "Mở thư mục nhận File";
             btnOpenFiles.AutoSize = true;
             btnOpenFiles.Location = new System.Drawing.Point(btnX, btnY + btnGap);
-            btnOpenFiles.Click += (s, e) =>
-            {
+            btnOpenFiles.Click += (s, e) => {
                 string path = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ReceivedFiles");
                 System.IO.Directory.CreateDirectory(path); // Đảm bảo thư mục tồn tại
                 System.Diagnostics.Process.Start("explorer.exe", path);
@@ -141,22 +129,23 @@ namespace remoteServer
             btnSendFile.Text = "Gửi File cho Client";
             btnSendFile.AutoSize = true;
             btnSendFile.Location = new System.Drawing.Point(btnX, btnY + btnGap * 2);
-            btnSendFile.Click += (s, e) =>
-            {
-                // ... (Send File Logic) ...
-                if (_lstClients.SelectedItem == null)
+            btnSendFile.Click += (s, e) => {
+                if (_lstClients.SelectedItem == null) 
                 {
                     MessageBox.Show("Vui lòng chọn một Client trong danh sách để gửi file.", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
                 var session = _lstClients.SelectedItem as ClientSession;
-
+                
                 using (var ofd = new OpenFileDialog())
                 {
                     if (ofd.ShowDialog() == DialogResult.OK)
                     {
-                        Task.Run(() => session.SendFileAsync(ofd.FileName));
-                        MessageBox.Show($"Đang gửi file {System.IO.Path.GetFileName(ofd.FileName)}...", "Thông báo");
+                        progressTransfer.Value = 0;
+                        Task.Run(async () => {
+                            await session.SendFileAsync(ofd.FileName);
+                            this.Invoke(new Action(() => MessageBox.Show($"Đã hoàn tất gửi file {System.IO.Path.GetFileName(ofd.FileName)}", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information)));
+                        });
                     }
                 }
             };
@@ -175,23 +164,87 @@ namespace remoteServer
             itemSendFile.Click += (s, e) => btnSendFile.PerformClick(); // Reuse logic
             ctxMenu.Items.Add(itemSendFile);
             _lstClients.ContextMenuStrip = ctxMenu;
+
+            // Selection changed handler to update UI
+            _lstClients.SelectedIndexChanged += (s, e) => {
+                UpdateSelectionInfo();
+            };
+
+            // Set initial DB status
+            UpdateDbStatusLabel();
         }
 
         private ListBox _lstClients;
         private System.Collections.Generic.List<ClientSession> _sessions = new System.Collections.Generic.List<ClientSession>();
 
+        // UI controls for DB and transfer
+        private Label lblDbStatus;
+        private ProgressBar progressTransfer;
+        private Label lblTransfer;
+
+        private void UpdateDbStatusLabel()
+        {
+            try
+            {
+                if (this.InvokeRequired)
+                {
+                    this.BeginInvoke(new Action(() => {
+                        lblDbStatus.Text = DatabaseService.IsDatabaseAvailable ? "Database: Online" : "Database: Offline";
+                        lblDbStatus.ForeColor = DatabaseService.IsDatabaseAvailable ? System.Drawing.Color.DarkGreen : System.Drawing.Color.DarkRed;
+                    }));
+                }
+                else
+                {
+                    lblDbStatus.Text = DatabaseService.IsDatabaseAvailable ? "Database: Online" : "Database: Offline";
+                    lblDbStatus.ForeColor = DatabaseService.IsDatabaseAvailable ? System.Drawing.Color.DarkGreen : System.Drawing.Color.DarkRed;
+                }
+            }
+            catch { }
+        }
+
+        private void UpdateSelectionInfo()
+        {
+            if (_lstClients.SelectedItem is ClientSession session)
+            {
+                // Show basic info in transfer label
+                lblTransfer.Text = $"Transfer: {session.Username} - {session}";
+            }
+            else
+            {
+                lblTransfer.Text = "Transfer:";
+            }
+        }
+
         private void OnClientConnected(ClientSession session)
         {
-            Invoke(new Action(() =>
-            {
-                _sessions.Add(session);
-                _lstClients.Items.Add(session); // DisplayMember needed? ClientSession.ToString() returns class name by default
-                // Let's override ToString? Or wrapper?
-                // For now, let's just add it. We need a DisplayMember.
-                // Wait, ClientSession needs a ToString override to look good.
-            }));
+            // Subscribe to file progress events to update UI
+            session.OnFileSendProgress += (fileName, bytesSent, totalBytes) => {
+                // Update UI progress bar if this session is selected
+                this.Invoke(new Action(() => {
+                    if (_lstClients.SelectedItem == session)
+                    {
+                        int percent = totalBytes > 0 ? (int)(bytesSent * 100 / totalBytes) : 0;
+                        progressTransfer.Value = Math.Min(100, Math.Max(0, percent));
+                        lblTransfer.Text = $"Sending {fileName}: {percent}%";
+                    }
+                }));
+            };
 
-            // Clean up when client disconnects? (Not implemented in Session yet, but good enough for now)
+            session.OnFileReceiveProgress += (fileName, bytesReceived, totalBytes) => {
+                this.Invoke(new Action(() => {
+                    if (_lstClients.SelectedItem == session)
+                    {
+                        int percent = totalBytes > 0 ? (int)(bytesReceived * 100 / totalBytes) : 0;
+                        progressTransfer.Value = Math.Min(100, Math.Max(0, percent));
+                        lblTransfer.Text = $"Receiving {fileName}: {percent}%";
+                    }
+                }));
+            };
+
+            Invoke(new Action(() => {
+                _sessions.Add(session);
+                _lstClients.Items.Add(session);
+            }));
         }
         private void ShowRegisterDialog()
         {

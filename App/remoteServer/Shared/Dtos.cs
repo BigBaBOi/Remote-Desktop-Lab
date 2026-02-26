@@ -61,8 +61,26 @@ namespace Shared.DTO
     }
 
     // File Transfer DTOs
+    public class FileMetaDto
+    {
+        public string FileId { get; set; } = string.Empty; // GUID để theo dõi phiên truyền
+        public string FileName { get; set; } = string.Empty;
+        public long TotalSize { get; set; }
+        public int ChunkSize { get; set; }
+        public int TotalChunks { get; set; }
+        public string Checksum { get; set; } = string.Empty;
+    }
+
+    public class FileAckDto
+    {
+        public string FileId { get; set; } = string.Empty;
+        public int LastReceivedChunkIndex { get; set; } // Server báo cho Client biết đã nhận tới chunk nào
+        public bool IsComplete { get; set; }
+    }
+
     public class FileChunkDto
     {
+        public string FileId { get; set; } = string.Empty;
         public string FileName { get; set; } = string.Empty;
         public long FileSize { get; set; }
         public int ChunkIndex { get; set; }
