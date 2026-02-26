@@ -1,5 +1,5 @@
 using System;
-using System.Data.SqlClient;
+using MySql.Data.MySqlClient;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
@@ -27,7 +27,7 @@ namespace remoteServer.Services
                 _isInitialized = false;
                 _connectionString = "";
                 // Khởi tạo lại
-                new DatabaseService(); 
+                new DatabaseService();
             }
         }
 
@@ -57,7 +57,6 @@ namespace remoteServer.Services
                         _connectionString = fileContent;
                         _isInitialized = true;
                         IsDatabaseAvailable = TestConnection(_connectionString);
-                        Console.WriteLine($"[DB] Đã tải từ Config: {_connectionString} (Status: {IsDatabaseAvailable})");
                         return;
                     }
                 }
@@ -65,13 +64,10 @@ namespace remoteServer.Services
                 // 2. Danh sách các chuỗi kết nối tiềm năng (Timeout 3s để dò nhanh)
                 string[] candidates = new string[]
                 {
-                    "Server=.;Database=RemoteDesktopDB;Trusted_Connection=True;MultipleActiveResultSets=true;TrustServerCertificate=True;Connection Timeout=3",
-                    "Server=.\\SQLEXPRESS;Database=RemoteDesktopDB;Trusted_Connection=True;MultipleActiveResultSets=true;TrustServerCertificate=True;Connection Timeout=3",
-                    "Server=127.0.0.1;Database=RemoteDesktopDB;Trusted_Connection=True;MultipleActiveResultSets=true;TrustServerCertificate=True;Connection Timeout=3",
-                    "Server=localhost;Database=RemoteDesktopDB;Trusted_Connection=True;MultipleActiveResultSets=true;TrustServerCertificate=True;Connection Timeout=3"
+                    "Server=127.0.0.1;Database=RemoteDesktopDB;Uid=root;Pwd=;Connection Timeout=3",
+                    "Server=localhost;Database=RemoteDesktopDB;Uid=root;Pwd=;Connection Timeout=3"
                 };
 
-                Console.WriteLine("[DB] Đang tự động dò tìm SQL Server...");
                 foreach (var connStr in candidates)
                 {
                     if (TestConnection(connStr))
@@ -79,7 +75,6 @@ namespace remoteServer.Services
                         _connectionString = connStr;
                         _isInitialized = true;
                         IsDatabaseAvailable = true;
-                        Console.WriteLine($"[DB] Kết nối thành công: {connStr}");
                         return;
                     }
                 }
@@ -88,7 +83,6 @@ namespace remoteServer.Services
                 _connectionString = candidates[0];
                 _isInitialized = true;
                 IsDatabaseAvailable = false;
-                Console.WriteLine("[DB] Không tìm thấy SQL Server. Chuyển sang chế độ Offline (Chỉ admin mặc định mới đăng nhập được).");
             }
         }
 
@@ -96,7 +90,7 @@ namespace remoteServer.Services
         {
             try
             {
-                using (var conn = new SqlConnection(connStr))
+                using (var conn = new MySqlConnection(connStr))
                 {
                     conn.Open();
                     return true;
@@ -116,8 +110,6 @@ namespace remoteServer.Services
         /// <returns>True nếu hợp lệ, False nếu sai</returns>
         public bool ValidateUser(string username, string passwordHash)
         {
-            Console.WriteLine($"[Validate] Kiểm tra User: {username}");
-            
             // Nếu Database sập, dùng tài khoản Admin cứng (Hardcode) phục vụ cứu hộ/test
             if (!IsDatabaseAvailable)
             {
@@ -126,24 +118,23 @@ namespace remoteServer.Services
 
             try
             {
-                using (var conn = new SqlConnection(_connectionString))
+                using (var conn = new MySqlConnection(_connectionString))
                 {
                     conn.Open();
-                    // WITH (NOLOCK): Đọc dữ liệu không cần chờ khóa (Tránh Deadlock)
-                    string query = "SELECT COUNT(1) FROM Users WITH (NOLOCK) WHERE Username = @u AND PasswordHash = @p";
-                    using (var cmd = new SqlCommand(query, conn))
+                    // WITH (NOLOCK) is SQL Server specific, remove it for MySQL
+                    string query = "SELECT COUNT(1) FROM Users WHERE Username = @u AND PasswordHash = @p";
+                    using (var cmd = new MySqlCommand(query, conn))
                     {
                         cmd.CommandTimeout = 5; // Giới hạn 5 giây
                         cmd.Parameters.AddWithValue("@u", username);
                         cmd.Parameters.AddWithValue("@p", passwordHash);
-                        int count = (int)cmd.ExecuteScalar();
+                        int count = Convert.ToInt32(cmd.ExecuteScalar());
                         return count > 0;
                     }
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                Console.WriteLine($"[Validate] Lỗi DB: {ex.Message}. Chuyển sang Fallback Admin.");
                 IsDatabaseAvailable = false; // Đánh dấu DB lỗi để lần sau không thử lại ngay
                 return CheckFallbackAdmin(username, passwordHash);
             }
@@ -155,8 +146,7 @@ namespace remoteServer.Services
             const string adminHash = "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9";
             if (username == "admin" && passwordHash == adminHash)
             {
-                 Console.WriteLine("[Validate] Đăng nhập bằng tài khoản Admin khẩn cấp (Fallback).");
-                 return true;
+                return true;
             }
             return false;
         }
@@ -174,16 +164,16 @@ namespace remoteServer.Services
 
             try
             {
-                using (var conn = new SqlConnection(_connectionString))
+                using (var conn = new MySqlConnection(_connectionString))
                 {
                     conn.Open();
                     // 1. Kiểm tra tồn tại
-                    string checkQuery = "SELECT COUNT(1) FROM Users WITH (NOLOCK) WHERE Username = @u";
-                    using (var cmd = new SqlCommand(checkQuery, conn))
+                    string checkQuery = "SELECT COUNT(1) FROM Users WHERE Username = @u";
+                    using (var cmd = new MySqlCommand(checkQuery, conn))
                     {
                         cmd.CommandTimeout = 5;
                         cmd.Parameters.AddWithValue("@u", username);
-                        int count = (int)cmd.ExecuteScalar();
+                        int count = Convert.ToInt32(cmd.ExecuteScalar());
                         if (count > 0)
                         {
                             message = "Tên đăng nhập đã tồn tại.";
@@ -193,21 +183,20 @@ namespace remoteServer.Services
 
                     // 2. Thêm mới
                     string insertQuery = "INSERT INTO Users (Username, PasswordHash) VALUES (@u, @p)";
-                    using (var cmd = new SqlCommand(insertQuery, conn))
+                    using (var cmd = new MySqlCommand(insertQuery, conn))
                     {
                         cmd.CommandTimeout = 5;
                         cmd.Parameters.AddWithValue("@u", username);
                         cmd.Parameters.AddWithValue("@p", passwordHash);
                         cmd.ExecuteNonQuery();
                     }
-                    
+
                     message = "Đăng ký thành công!";
                     return true;
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[Register] Lỗi: {ex.Message}");
                 message = "Lỗi Database: " + ex.Message;
                 IsDatabaseAvailable = false;
                 return false;
@@ -223,12 +212,12 @@ namespace remoteServer.Services
 
             try
             {
-                using (var conn = new SqlConnection(_connectionString))
+                using (var conn = new MySqlConnection(_connectionString))
                 {
                     conn.Open();
-                    // Insert và lấy ID vừa tạo
-                    string query = "INSERT INTO SessionHistory (Username, ClientIP, StartTime) VALUES (@u, @ip, GETDATE()); SELECT SCOPE_IDENTITY();";
-                    using (var cmd = new SqlCommand(query, conn))
+                    // Insert và lấy ID vừa tạo - MySQL dùng LAST_INSERT_ID()
+                    string query = "INSERT INTO SessionHistory (Username, ClientIP, StartTime) VALUES (@u, @ip, NOW()); SELECT LAST_INSERT_ID();";
+                    using (var cmd = new MySqlCommand(query, conn))
                     {
                         cmd.CommandTimeout = 3; // Timeout ngắn cho Log
                         cmd.Parameters.AddWithValue("@u", username);
@@ -238,11 +227,8 @@ namespace remoteServer.Services
                     }
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                Console.WriteLine($"[LogSession] Lỗi ghi log: {ex.Message}");
-                // Không đánh dấu IsDatabaseAvailable = false ở đây vì Log không quan trọng, 
-                // có thể lỗi tạm thời nhưng Login vẫn cần hoạt động.
                 return -1;
             }
         }
@@ -256,11 +242,11 @@ namespace remoteServer.Services
 
             try
             {
-                using (var conn = new SqlConnection(_connectionString))
+                using (var conn = new MySqlConnection(_connectionString))
                 {
                     conn.Open();
-                    string query = "UPDATE SessionHistory SET EndTime = GETDATE() WHERE Id = @id";
-                    using (var cmd = new SqlCommand(query, conn))
+                    string query = "UPDATE SessionHistory SET EndTime = NOW() WHERE Id = @id";
+                    using (var cmd = new MySqlCommand(query, conn))
                     {
                         cmd.CommandTimeout = 3;
                         cmd.Parameters.AddWithValue("@id", sessionId);
@@ -268,12 +254,11 @@ namespace remoteServer.Services
                     }
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                Console.WriteLine($"[LogSessionEnd] Lỗi: {ex.Message}");
             }
         }
-        
+
         /// <summary>
         /// Hàm băm chuỗi SHA256 (Tĩnh).
         /// </summary>

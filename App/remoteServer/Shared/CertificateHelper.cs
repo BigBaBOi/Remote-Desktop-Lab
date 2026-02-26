@@ -14,7 +14,7 @@ namespace Shared.Utils
         {
             // Allow all for development/lab environment
             // In production, check certificate.Subject/Thumbprint/Chain
-            return true; 
+            return true;
         }
 
         public static X509Certificate2? LoadCertificate(string path, string password)
@@ -25,7 +25,7 @@ namespace Shared.Utils
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[CertificateHelper] Error loading certificate: {ex.Message}");
+                Logger.Log($"[CertificateHelper] Error loading certificate: {ex.Message}");
                 return null;
             }
         }

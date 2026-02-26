@@ -28,9 +28,9 @@ namespace remoteServer.Services
             layout.Padding = new Padding(20);
             layout.RowCount = 5;
             layout.ColumnCount = 2;
-            
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120F)); 
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F)); 
+
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120F));
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
 
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40F));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40F));
@@ -51,9 +51,9 @@ namespace remoteServer.Services
             layout.Controls.Add(txtDb, 1, 1);
 
             // Username
-            var lblUser = new Label { Text = "User (sa):", TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill, AutoSize = false };
+            var lblUser = new Label { Text = "User (root):", TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill, AutoSize = false };
             layout.Controls.Add(lblUser, 0, 2);
-            txtUser = new TextBox { Text = "sa", Anchor = AnchorStyles.Left | AnchorStyles.Right, Margin = new Padding(3, 8, 3, 3) };
+            txtUser = new TextBox { Text = "root", Anchor = AnchorStyles.Left | AnchorStyles.Right, Margin = new Padding(3, 8, 3, 3) };
             layout.Controls.Add(txtUser, 1, 2);
 
             // Password
@@ -66,13 +66,13 @@ namespace remoteServer.Services
             var pnlButtons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill, AutoSize = true, Margin = new Padding(0, 20, 0, 0) };
             btnCancel = new Button { Text = "Hủy", DialogResult = DialogResult.Cancel, Height = 35, Width = 80 };
             btnSave = new Button { Text = "Lưu & Kết nối", DialogResult = DialogResult.OK, AutoSize = true, Height = 35, MinimumSize = new Size(100, 35) };
-            
+
             btnSave.Click += BtnSave_Click;
 
             pnlButtons.Controls.Add(btnCancel);
             pnlButtons.Controls.Add(btnSave);
             layout.Controls.Add(pnlButtons, 0, 4);
-            layout.SetColumnSpan(pnlButtons, 2); 
+            layout.SetColumnSpan(pnlButtons, 2);
 
             Controls.Add(layout);
             AcceptButton = btnSave;
@@ -89,7 +89,6 @@ namespace remoteServer.Services
             {
                 string connStr = File.ReadAllText(configPath);
                 // Simple parsing logic (not robust but helpful)
-                // Server=...;Database=...;User Id=...;Password=...
                 foreach (var part in connStr.Split(';'))
                 {
                     var kv = part.Split('=');
@@ -99,7 +98,7 @@ namespace remoteServer.Services
                         string val = kv[1].Trim();
                         if (key == "server") txtIp.Text = val;
                         if (key == "database") txtDb.Text = val;
-                        if (key == "user id") txtUser.Text = val;
+                        if (key == "uid") txtUser.Text = val;
                         // Password might be complex, skip for security or show placeholder
                     }
                 }
@@ -115,12 +114,12 @@ namespace remoteServer.Services
             try
             {
                 // Build Connection String
-                string connStr = $"Server={txtIp.Text};Database={txtDb.Text};User Id={txtUser.Text};Password={txtPass.Text};Trusted_Connection=False;MultipleActiveResultSets=true;TrustServerCertificate=True;Connection Timeout=5";
+                string connStr = $"Server={txtIp.Text};Database={txtDb.Text};Uid={txtUser.Text};Pwd={txtPass.Text};Connection Timeout=5";
 
                 // Test connection async before saving
                 await Task.Run(() =>
                 {
-                    using (var conn = new System.Data.SqlClient.SqlConnection(connStr))
+                    using (var conn = new MySql.Data.MySqlClient.MySqlConnection(connStr))
                     {
                         conn.Open(); // Will throw if invalid
                     }

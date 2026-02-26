@@ -37,10 +37,11 @@ namespace remoteServer.Network
         {
             // Đường dẫn file chứng chỉ
             string certPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "server.pfx");
-            
+
             // Nếu không tìm thấy ở thư mục chạy, thử tìm ở thư mục source (chỉ dùng cho môi trường Dev)
-            if (!File.Exists(certPath)) {
-                 certPath = @"d:\Remote-Desktop-Lab\App\remoteServer\remoteServer\server.pfx"; 
+            if (!File.Exists(certPath))
+            {
+                certPath = @"d:\Remote-Desktop-Lab\App\remoteServer\remoteServer\server.pfx";
             }
 
             if (File.Exists(certPath))
@@ -48,16 +49,16 @@ namespace remoteServer.Network
                 _serverCertificate = CertificateHelper.LoadCertificate(certPath, "password");
                 if (_serverCertificate == null)
                 {
-                    Console.WriteLine("[SSL] Không thể tải server.pfx. Server sẽ chạy ở chế độ KHÔNG BẢO MẬT (Unsecure).");
+                    Logger.Log("[SSL] Không thể tải server.pfx. Server sẽ chạy ở chế độ KHÔNG BẢO MẬT (Unsecure).");
                 }
                 else
                 {
-                    Console.WriteLine($"[SSL] Đã tải chứng chỉ: {_serverCertificate.Subject}");
+                    Logger.Log($"[SSL] Đã tải chứng chỉ: {_serverCertificate.Subject}");
                 }
             }
             else
             {
-                Console.WriteLine($"[SSL] Không tìm thấy file {certPath}. Server sẽ chạy ở chế độ KHÔNG BẢO MẬT.");
+                Logger.Log($"[SSL] Không tìm thấy file {certPath}. Server sẽ chạy ở chế độ KHÔNG BẢO MẬT.");
             }
         }
 
@@ -70,7 +71,7 @@ namespace remoteServer.Network
             _listener.Start();
             _isRunning = true;
             _ = AcceptLoopAsync(); // Chạy vòng lặp chấp nhận kết nối trên luồng nền
-            Console.WriteLine("[Listener] Server đã khởi động.");
+            Logger.Log("[Listener] Server đã khởi động.");
         }
 
         /// <summary>
@@ -93,22 +94,22 @@ namespace remoteServer.Network
                 {
                     // Chờ Client kết nối (Non-blocking)
                     TcpClient client = await _listener.AcceptTcpClientAsync();
-                    
-                    Console.WriteLine($"[Listener] Client mới kết nối từ: {client.Client.RemoteEndPoint}");
+
+                    Logger.Log($"[Listener] Client mới kết nối từ: {client.Client.RemoteEndPoint}");
 
                     // Tạo Session mới cho Client này
                     ClientSession session = new ClientSession(client, _serverCertificate);
-                    
+
                     // Thông báo cho UI (Server Form) biết
                     OnClientConnected?.Invoke(session);
-                    
+
                     // Bắt đầu xử lý dữ liệu của Session này (chạy song song)
                     _ = session.ProcessAsync();
                 }
                 catch (ObjectDisposedException) { break; } // Listener bị đóng
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[Listener] Lỗi chấp nhận kết nối: {ex.Message}");
+                    Logger.Log($"[Listener] Lỗi chấp nhận kết nối: {ex.Message}");
                 }
             }
         }

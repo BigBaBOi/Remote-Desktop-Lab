@@ -13,68 +13,54 @@ Trước khi bắt đầu, đảm bảo máy tính của bạn đã cài đặt:
 1.  **Windows 10/11** (64-bit).
 2.  **.NET Desktop Runtime 8.0** (Để chạy ứng dụng).
     - Tải tại: [https://dotnet.microsoft.com/en-us/download/dotnet/8.0](https://dotnet.microsoft.com/en-us/download/dotnet/8.0)
-3.  **SQL Server** (Bản Express hoặc Developer đều được).
-4.  **SQL Server Management Studio (SSMS)** (Để quản lý Database).
+3.  **MySQL Server** (XAMPP, WAMP, hoặc MySQL Workbench đều được).
+4.  **Công cụ quản lý MySQL** (phpMyAdmin, MySQL Workbench, DBeaver, v.v... để tương tác với Database).
 
 ---
 
-## 2. Phần 1: Cài Đặt Database (SQL Server)
+## 2. Phần 1: Cài Đặt Database (MySQL)
 
 Ứng dụng cần Database để lưu trữ tài khoản người dùng và lịch sử đăng nhập.
 
-**Bước 1:** Mở **SQL Server Management Studio (SSMS)** và kết nối vào SQL Server của bạn (thường là `.` hoặc `.\SQLEXPRESS`).
+**Bước 1:** Mở **công cụ quản lý MySQL** của bạn (ví dụ: phpMyAdmin tại `http://localhost/phpmyadmin/` nếu dùng XAMPP) và kết nối vào MySQL Server của bạn (thường thông qua user `root`, mật khẩu rỗng).
 
-**Bước 2:** Mở file Script tạo Database.
+**Bước 2:** Chạy Script tạo Database.
 
-- Trong SSMS, chọn **File** -> **Open** -> **File...**
-- Tìm đến thư mục source code: `Remote-Desktop-Lab\App\remoteServer\remoteServer\setup_database.sql`
-- Hoặc copy nội dung dưới đây và dán vào cửa sổ **New Query**:
+- Tìm đến thư mục source code, copy nội dung của file cấu hình: `Remote-Desktop-Lab\App\remoteServer\remoteServer\setup_database.sql`
+- Hoặc copy nội dung dưới đây và dán vào cửa sổ **SQL Query** của công cụ quản lý:
 
 ```sql
--- Tạo Database nếu chưa có
-IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = 'RemoteDesktopDB')
-BEGIN
-    CREATE DATABASE RemoteDesktopDB;
-END
-GO
-
+-- Create Database
+CREATE DATABASE IF NOT EXISTS RemoteDesktopDB;
 USE RemoteDesktopDB;
-GO
 
--- Tạo bảng Users
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Users')
-BEGIN
-    CREATE TABLE Users (
-        Id INT PRIMARY KEY IDENTITY(1,1),
-        Username NVARCHAR(50) NOT NULL UNIQUE,
-        PasswordHash NVARCHAR(256) NOT NULL,
-        CreatedAt DATETIME DEFAULT GETDATE()
-    );
+-- Create Users Table
+CREATE TABLE IF NOT EXISTS Users (
+    Id INT PRIMARY KEY AUTO_INCREMENT,
+    Username VARCHAR(50) NOT NULL UNIQUE,
+    PasswordHash VARCHAR(256) NOT NULL, -- SHA256
+    CreatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 
-    -- Tạo tài khoản Admin mặc định (Pass: admin123)
-    INSERT INTO Users (Username, PasswordHash)
-    VALUES ('admin', '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9');
-END
-GO
+-- Insert Default Admin User (Password: admin123)
+-- Hash: 240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9 (SHA256 of 'admin123')
+INSERT IGNORE INTO Users (Username, PasswordHash)
+VALUES ('admin', '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9');
 
--- Tạo bảng Lịch sử (SessionHistory)
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'SessionHistory')
-BEGIN
-    CREATE TABLE SessionHistory (
-        Id INT PRIMARY KEY IDENTITY(1,1),
-        Username NVARCHAR(50) NOT NULL,
-        ClientIP NVARCHAR(50),
-        StartTime DATETIME DEFAULT GETDATE(),
-        EndTime DATETIME
-        -- FOREIGN KEY bỏ qua để đơn giản hóa việc test
-    );
-END
-GO
+-- Create SessionHistory Table
+CREATE TABLE IF NOT EXISTS SessionHistory (
+    Id INT PRIMARY KEY AUTO_INCREMENT,
+    Username VARCHAR(50) NOT NULL,
+    ClientIP VARCHAR(50),
+    StartTime DATETIME DEFAULT CURRENT_TIMESTAMP,
+    EndTime DATETIME,
+    FOREIGN KEY (Username) REFERENCES Users(Username)
+);
 ```
 
-**Bước 3:** Nhấn nút **Execute** (hoặc F5) để chạy script.
+**Bước 3:** Nhấn nút **Execute / Go** để chạy script.
 
-- Thông báo "Commands completed successfully" là thành công.
+- Không có lỗi hiện ra tức là đã thành công. Bảng `Users` và `SessionHistory` đã được tạo trong Database `RemoteDesktopDB`.
 
 ---
 
@@ -90,11 +76,12 @@ Server là nơi nhận kết nối và quản lý dữ liệu.
 **Bước 2:** Cấu hình kết nối Database.
 
 - Trên giao diện Server, nhấn nút **"Cấu hình Database"**.
-- Nhập thông tin SQL Server của bạn:
-  - **Server Host**: `.` hoặc `.\SQLEXPRESS` hoặc `127.0.0.1` (tùy máy).
-  - **Database**: `RemoteDesktopDB` (giữ nguyên).
-  - **Authentication**: Chọn "Windows Authentication" (nếu dùng user máy tính) hoặc "SQL Server Authentication" (nếu có user sa).
-- Nhấn **"Kiểm tra kết nối"**. Nếu báo "Kết nối thành công", nhấn **"Lưu Cấu Hình"**.
+- Nhập thông tin MySQL Server của bạn:
+  - **IP Máy SQL**: `127.0.0.1` (hoặc `localhost`).
+  - **Tên Database**: `RemoteDesktopDB` (giữ nguyên).
+  - **User (root)**: `root` (mặc định của XAMPP/WAMP thường là root).
+  - **Mật khẩu**: (Bỏ trống hoặc nhập mật khẩu root của bạn).
+- Nhấn **"Lưu & Kết nối"**. Nếu không báo lỗi pop-up nào và tự đóng bảng thì kết nối đã thành công.
 
 **Bước 3:** Đăng ký tài khoản cho Client (Tùy chọn).
 

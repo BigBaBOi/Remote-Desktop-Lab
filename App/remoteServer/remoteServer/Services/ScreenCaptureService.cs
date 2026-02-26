@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Windows.Forms;
+using Shared.Utils;
 
 namespace remoteServer.Services
 {
@@ -13,7 +14,7 @@ namespace remoteServer.Services
     public class ScreenCaptureService
     {
         #region Fields & Constants
-        
+
         // Giới hạn độ phân giải (Cân bằng giữa Chất lượng và Tốc độ)
         private const int MAX_WIDTH = 1600;
         private const int MAX_HEIGHT = 900;
@@ -32,7 +33,7 @@ namespace remoteServer.Services
             _bounds = Screen.PrimaryScreen.Bounds;
             _jpegCodec = GetEncoderInfo("image/jpeg");
             _encoderParams = new EncoderParameters(1);
-            
+
             // Thiết lập chất lượng ảnh JPEG là 65% (Đủ rõ nét cho văn bản, nhưng vẫn nhẹ)
             _encoderParams.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 65L);
         }
@@ -55,7 +56,7 @@ namespace remoteServer.Services
         {
             // Cập nhật kích thước màn hình thực tế (đề phòng thay đổi độ phân giải lúc chạy)
             _bounds = Screen.PrimaryScreen.Bounds;
-            
+
             // Khởi tạo giá trị mặc định
             left = 0; top = 0; width = 0; height = 0; totalW = 0; totalH = 0;
 
@@ -81,12 +82,12 @@ namespace remoteServer.Services
                 if (_prevBitmap != null && _prevBitmap.Width == finalW && _prevBitmap.Height == finalH)
                 {
                     dirtyRect = GetBoundingBox(processedBitmap, _prevBitmap);
-                    
+
                     // Nếu không có thay đổi gì -> Trả về null để tiết kiệm băng thông tuyệt đối
                     if (dirtyRect.Width == 0 || dirtyRect.Height == 0)
                     {
                         processedBitmap.Dispose();
-                        return null; 
+                        return null;
                     }
 
                     // Nếu vùng thay đổi nhỏ hơn toàn màn hình -> Chỉ gửi phần thay đổi (Partial Update)
@@ -138,7 +139,7 @@ namespace remoteServer.Services
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[ScreenCapture] Lỗi: {ex.Message}");
+                Logger.Log($"[ScreenCapture] Lỗi: {ex.Message}");
                 width = 0; height = 0;
                 return Array.Empty<byte>();
             }
@@ -173,19 +174,19 @@ namespace remoteServer.Services
 
             int bytesPerPixel = 2; // 16bpp = 2 bytes/pixel
             int stride = dataCur.Stride;
-            
+
             // Con trỏ tới dòng đầu tiên
             byte* scan0Cur = (byte*)dataCur.Scan0.ToPointer();
             byte* scan0Prev = (byte*)dataPrev.Scan0.ToPointer();
 
             // Duyệt qua các dòng (nhảy cóc 4 dòng mỗi lần để tăng tốc độ quét)
-            for (int y = 0; y < h; y += 4) 
+            for (int y = 0; y < h; y += 4)
             {
                 byte* rowCur = scan0Cur + (y * stride);
                 byte* rowPrev = scan0Prev + (y * stride);
 
                 // Duyệt qua các cột (nhảy cóc 4 pixel mỗi lần)
-                for (int x = 0; x < w; x += 4) 
+                for (int x = 0; x < w; x += 4)
                 {
                     // So sánh giá trị pixel (ushort vì là 16-bit color)
                     ushort p1 = *((ushort*)(rowCur + x * bytesPerPixel));
