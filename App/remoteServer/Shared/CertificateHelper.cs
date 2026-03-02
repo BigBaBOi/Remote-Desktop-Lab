@@ -11,7 +11,11 @@ namespace Shared.Utils
             X509Chain? chain,
             SslPolicyErrors sslPolicyErrors)
         {
-            if (certificate == null || chain == null) return false;
+            if (certificate == null || chain == null)
+            {
+                Logger.Log("[SSL] ValidateServerCertificate: certificate or chain is null.");
+                return false;
+            }
 
             // Trong môi trường development, file cer có thể đặt cùng thư mục chạy
             string caPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "RemoteDesktopRootCA.cer");
@@ -29,6 +33,15 @@ namespace Shared.Utils
             {
                 var caCert = new X509Certificate2(caPath);
 
+                // Log thông tin chứng chỉ server/ca để debug
+                try
+                {
+                    var serverCert2 = new X509Certificate2(certificate);
+                    Logger.Log($"[SSL] Server cert Subject: {serverCert2.Subject}; Issuer: {serverCert2.Issuer}; Thumbprint: {serverCert2.Thumbprint}");
+                    Logger.Log($"[SSL] CA cert Subject: {caCert.Subject}; Thumbprint: {caCert.Thumbprint}");
+                }
+                catch { }
+
                 // Chỉ định Chain tin tưởng Root CA cụ thể
                 chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
                 chain.ChainPolicy.RevocationFlag = X509RevocationFlag.ExcludeRoot;
@@ -40,16 +53,21 @@ namespace Shared.Utils
                 chain.ChainPolicy.CustomTrustStore.Add(caCert);
 
                 // Ép kiểu về X509Certificate2 để build chain
-                var serverCert2 = new X509Certificate2(certificate);
-                bool isValid = chain.Build(serverCert2);
+                var serverCert = new X509Certificate2(certificate);
+                bool isValid = chain.Build(serverCert);
 
                 if (!isValid)
                 {
                     Logger.Log("[SSL] Lỗi xác thực chứng chỉ Server:");
                     foreach (var status in chain.ChainStatus)
                     {
-                        Logger.Log($"   -> {status.StatusInformation}");
+                        Logger.Log($"   -> {status.Status}: {status.StatusInformation}");
                     }
+                    Logger.Log($"[SSL] sslPolicyErrors: {sslPolicyErrors}");
+                }
+                else
+                {
+                    Logger.Log("[SSL] Xác thực chứng chỉ Server thành công (chain built).");
                 }
 
                 return isValid;
@@ -65,7 +83,9 @@ namespace Shared.Utils
         {
             try
             {
-                return new X509Certificate2(path, password, X509KeyStorageFlags.Exportable);
+                // Use MachineKeySet to ensure private key is accessible for SslStream on Windows
+                var flags = X509KeyStorageFlags.Exportable | X509KeyStorageFlags.MachineKeySet;
+                return new X509Certificate2(path, password, flags);
             }
             catch (Exception ex)
             {

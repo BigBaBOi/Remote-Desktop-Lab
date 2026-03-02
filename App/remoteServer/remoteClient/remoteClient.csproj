@@ -13,4 +13,22 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
   </PropertyGroup>
 
+  <ItemGroup>
+    <None Update="RemoteDesktopRootCA.cer">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <!-- Copy the server-generated Root CA certificate into the client's output folder after build
+       This allows the client to find RemoteDesktopRootCA.cer in its bin (e.g. Debug/net8.0-windows)
+       Path is relative to the client project directory and uses the current configuration (Debug/Release).
+       ContinueOnError="true" so build doesn't fail if the cert isn't present yet. -->
+  <Target Name="CopyServerRootCA" AfterTargets="Build">
+    <PropertyGroup>
+      <ServerCertPath>$(ProjectDir)..\remoteServer\bin\$(Configuration)\net8.0-windows\RemoteDesktopRootCA.cer</ServerCertPath>
+    </PropertyGroup>
+    <Message Importance="Low" Text="Attempting to copy server Root CA from '$(ServerCertPath)' to '$(OutDir)'" />
+    <Copy SourceFiles="$(ServerCertPath)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" ContinueOnError="true" />
+  </Target>
+
 </Project>

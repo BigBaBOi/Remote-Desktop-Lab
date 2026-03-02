@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -7,7 +7,7 @@ namespace Shared.Security
 {
     public static class SecurityHelper
     {
-        // RSA Key Generation
+        // khởi tạo RSA Key
         public static (string PublicKey, string PrivateKey) GenerateRsaKeys()
         {
             using (var rsa = RSA.Create())
@@ -17,7 +17,7 @@ namespace Shared.Security
             }
         }
 
-        // RSA Encrypt (for AES Key exchange)
+        // mã hóa RSA (cho việc trao đổi khóa AES)
         public static byte[] RsaEncrypt(byte[] data, string publicKeyXml)
         {
             using (var rsa = RSA.Create())
@@ -27,7 +27,7 @@ namespace Shared.Security
             }
         }
 
-        // RSA Decrypt
+        // giải mã RSA
         public static byte[] RsaDecrypt(byte[] data, string privateKeyXml)
         {
             using (var rsa = RSA.Create())
@@ -37,7 +37,7 @@ namespace Shared.Security
             }
         }
 
-        // AES Encrypt (for Payload)
+        // mã hóa AES (cho Payload)
         public static byte[] AesEncrypt(byte[] data, byte[] key, byte[] iv)
         {
             using (var aes = Aes.Create())

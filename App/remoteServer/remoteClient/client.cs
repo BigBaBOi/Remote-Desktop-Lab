@@ -87,6 +87,7 @@ namespace remoteClient
             // Tạo các Button chức năng
             btnConnect = new Button { Parent = flowLayout, Text = "Kết nối", AutoSize = true, Cursor = Cursors.Hand, Margin = new Padding(0, 0, 10, 0) };
             var btnSendFile = new Button { Parent = flowLayout, Text = "Gửi File", AutoSize = true, Enabled = false, Cursor = Cursors.Hand, Margin = new Padding(0, 0, 10, 0) };
+            var btnOpenReceived = new Button { Parent = flowLayout, Text = "Thư mục nhận File", AutoSize = true, Cursor = Cursors.Hand, Margin = new Padding(0, 0, 10, 0) };
             lblStatus = new Label { Parent = flowLayout, Text = "Sẵn sàng", AutoSize = true, ForeColor = Color.Blue, Margin = new Padding(0, 5, 0, 5) };
 
             // Thêm ProgressBar
@@ -115,6 +116,11 @@ namespace remoteClient
             // Xử lý sự kiện click nút
             btnConnect.Click += BtnConnect_Click;
             btnSendFile.Click += BtnSendFile_Click;
+            btnOpenReceived.Click += (s, e) => {
+                string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ReceivedFiles");
+                Directory.CreateDirectory(path);
+                System.Diagnostics.Process.Start("explorer.exe", path);
+            };
         }
 
         #endregion
@@ -318,6 +324,9 @@ namespace remoteClient
                 case PacketType.FileChunk:
                     HandleFileChunk(payload);
                     break;
+                case PacketType.FileMeta:
+                    HandleFileMeta(payload);
+                    break;
             }
         }
 
@@ -376,8 +385,8 @@ namespace remoteClient
                     var chunk = Image.FromStream(ms);
 
                     // 1. Xác định kích thước thực (Server gửi TotalW/H)
-                    int totalW = screenDto.TotalWidth > 0 ? screenDto.TotalWidth : screenDto.Width;
-                    int totalH = screenDto.TotalHeight > 0 ? screenDto.TotalHeight : screenDto.Height;
+                    int totalW = screenDto.TotalWidth > 0 ? screenDto.Width : screenDto.Width;
+                    int totalH = screenDto.TotalHeight > 0 ? screenDto.Height : screenDto.Height;
 
                     // 2. Tạo hoặc Resize BackBuffer nếu kích thước thay đổi
                     if (_backBuffer == null || _backBuffer.Width != totalW || _backBuffer.Height != totalH)
@@ -408,6 +417,51 @@ namespace remoteClient
             }
         }
 
+        private async void HandleFileMeta(byte[] payload)
+        {
+            var metaDto = SerializationHelper.Deserialize<FileMetaDto>(payload);
+            if (metaDto == null) return;
+
+            // Prepare ReceivedFiles folder
+            string saveDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ReceivedFiles");
+            Directory.CreateDirectory(saveDir);
+
+            string partPath = Path.Combine(saveDir, metaDto.FileName + ".part");
+            long existingSize = 0;
+            if (File.Exists(partPath)) existingSize = new FileInfo(partPath).Length;
+
+            int lastChunkIndex = -1;
+            if (existingSize > 0 && metaDto.ChunkSize > 0)
+            {
+                lastChunkIndex = (int)(existingSize / metaDto.ChunkSize) - 1;
+                long validBytes = (lastChunkIndex + 1) * (long)metaDto.ChunkSize;
+                using (var fs = new FileStream(partPath, FileMode.Open, FileAccess.Write))
+                {
+                    fs.SetLength(validBytes);
+                }
+            }
+
+            bool isComplete = existingSize >= metaDto.TotalSize;
+
+            var ackDto = new FileAckDto
+            {
+                FileId = metaDto.FileId,
+                LastReceivedChunkIndex = lastChunkIndex,
+                IsComplete = isComplete
+            };
+
+            // Gửi FileAck về Server để Server biết resume từ chunk nào
+            await _connection.SendPacketAsync(PacketType.FileAck, SerializationHelper.Serialize(ackDto));
+
+            // Update UI
+            Invoke(new Action(() =>
+            {
+                lblStatus.Text = $"Sẵn sàng nhận: {metaDto.FileName} (từ index {lastChunkIndex + 1})";
+                pbTransfer.Visible = true;
+                pbTransfer.Value = 0;
+            }));
+        }
+
         private async void HandleFileChunk(byte[] payload)
         {
             var chunkDto = SerializationHelper.Deserialize<FileChunkDto>(payload);
@@ -418,15 +472,18 @@ namespace remoteClient
                 {
                     string saveDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ReceivedFiles");
                     Directory.CreateDirectory(saveDir);
-                    string filePath = Path.Combine(saveDir, chunkDto.FileName);
+                    string partPath = Path.Combine(saveDir, chunkDto.FileName + ".part");
+                    string finalPath = Path.Combine(saveDir, chunkDto.FileName);
 
-                    using (var fs = new FileStream(filePath, chunkDto.ChunkIndex == 0 ? FileMode.Create : FileMode.Append, FileAccess.Write))
+                    // Append data
+                    using (var fs = new FileStream(partPath, FileMode.OpenOrCreate, FileAccess.Write))
                     {
+                        fs.Seek(0, SeekOrigin.End);
                         await fs.WriteAsync(chunkDto.Data, 0, chunkDto.Data.Length);
                     }
 
                     // Cập nhật ProgressBar trên UI thread
-                    long currentSize = new FileInfo(filePath).Length;
+                    long currentSize = new FileInfo(partPath).Length;
                     int percent = chunkDto.FileSize > 0 ? (int)(currentSize * 100 / chunkDto.FileSize) : 0;
 
                     Invoke(new Action(() =>
@@ -436,12 +493,16 @@ namespace remoteClient
                         lblStatus.Text = $"Đang nhận: {chunkDto.FileName} ({percent}%)";
                     }));
 
-                    if (chunkDto.IsLastChunk)
+                    if (chunkDto.IsLastChunk || currentSize >= chunkDto.FileSize)
                     {
+                        // Rename .part to final file
+                        if (File.Exists(finalPath)) File.Delete(finalPath);
+                        File.Move(partPath, finalPath);
+
                         Invoke(new Action(() =>
                         {
                             pbTransfer.Visible = false;
-                            MessageBox.Show($"Đã nhận file từ Server:\n{filePath}", "Nhận File", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            MessageBox.Show($"Đã nhận file từ Server:\n{finalPath}", "Nhận File", MessageBoxButtons.OK, MessageBoxIcon.Information);
                             lblStatus.Text = $"Đã nhận xong: {chunkDto.FileName}";
                             // Mở thư mục chứa file
                             System.Diagnostics.Process.Start("explorer.exe", saveDir);

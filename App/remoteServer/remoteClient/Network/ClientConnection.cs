@@ -57,6 +57,18 @@ namespace remoteClient.Network
 
                 Stream networkStream = _client.GetStream();
 
+                // --- DIAGNOSTIC: Kiểm tra file Root CA trước khi handshake SSL ---
+                string caPathCheck1 = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "RemoteDesktopRootCA.cer");
+                string caPathCheck2 = "RemoteDesktopRootCA.cer";
+                Logger.Log($"[ClientConnection] Kiểm tra Root CA tại: {caPathCheck1}");
+                Logger.Log($"[ClientConnection] Tồn tại: {File.Exists(caPathCheck1)}");
+                if (!File.Exists(caPathCheck1))
+                {
+                    Logger.Log($"[ClientConnection] Thử đường dẫn tương đối: {Path.GetFullPath(caPathCheck2)}");
+                    Logger.Log($"[ClientConnection] Tồn tại: {File.Exists(caPathCheck2)}");
+                }
+                // ------------------------------------------------------------------
+
                 // 2. Nâng cấp lên SSL/TLS
                 // Callback ValidateServerCertificate đang trả về true để chấp nhận chứng chỉ tự ký (Self-signed)
                 SslStream sslStream = new SslStream(

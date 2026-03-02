@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using Shared.Utils;
@@ -64,11 +65,35 @@ namespace Shared.Security
                     new X509EnhancedKeyUsageExtension(
                         new OidCollection { new Oid("1.3.6.1.5.5.7.3.1") }, false));
 
-                // Subject Alternative Name: localhost and 127.0.0.1 (Có thể mở rộng thêm IP thật)
+                // Subject Alternative Name: localhost, loopback + tất cả IP thật và Hostname của máy chủ
                 var sanBuilder = new SubjectAlternativeNameBuilder();
                 sanBuilder.AddDnsName("localhost");
-                sanBuilder.AddIpAddress(System.Net.IPAddress.Loopback);
-                sanBuilder.AddIpAddress(System.Net.IPAddress.IPv6Loopback);
+                sanBuilder.AddIpAddress(IPAddress.Loopback);
+                sanBuilder.AddIpAddress(IPAddress.IPv6Loopback);
+
+                // Tự động thêm Hostname và tất cả IP thật của máy chủ vào SAN
+                string hostName = Dns.GetHostName();
+                sanBuilder.AddDnsName(hostName);
+                Logger.Log($"[CAHelper] Thêm hostname vào SAN: {hostName}");
+
+                try
+                {
+                    IPAddress[] hostAddresses = Dns.GetHostAddresses(hostName);
+                    foreach (var ip in hostAddresses)
+                    {
+                        // Chỉ thêm IPv4 và IPv6 unicast (bỏ qua loopback đã thêm ở trên)
+                        if (!IPAddress.IsLoopback(ip))
+                        {
+                            sanBuilder.AddIpAddress(ip);
+                            Logger.Log($"[CAHelper] Thêm IP vào SAN: {ip}");
+                        }
+                    }
+                }
+                catch (Exception dnsEx)
+                {
+                    Logger.Log($"[CAHelper] Không thể lấy địa chỉ IP của host: {dnsEx.Message}");
+                }
+
                 request.CertificateExtensions.Add(sanBuilder.Build());
 
                 // Create the cert signed by CA, valid for 1 year
