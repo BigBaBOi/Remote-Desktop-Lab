@@ -63,8 +63,8 @@ namespace remoteServer.Services
             try
             {
                 // 1. Chụp màn hình hiện tại
-                // Sử dụng Format16bppRgb555 giúp giảm một nửa băng thông bộ nhớ so với 32-bit, tăng tốc độ xử lý GDI+
-                Bitmap currentBitmap = new Bitmap(_bounds.Width, _bounds.Height, PixelFormat.Format16bppRgb555);
+                // Sử dụng Format32bppPArgb để tương thích tốt nhất với JPEG encoder và tốc độ GDI+ nhanh
+                Bitmap currentBitmap = new Bitmap(_bounds.Width, _bounds.Height, PixelFormat.Format32bppPArgb);
                 using (Graphics g = Graphics.FromImage(currentBitmap))
                 {
                     g.CopyFromScreen(_bounds.Location, Point.Empty, _bounds.Size);
@@ -152,6 +152,41 @@ namespace remoteServer.Services
             return CaptureScreen(out width, out height, out int l, out int t, out int tw, out int th);
         }
 
+        /// <summary>
+        /// Chụp toàn bộ màn hình (bỏ qua dirty rect detection) để dùng cho keepalive frame.
+        /// Cập nhật _prevBitmap để dirty rect lần sau vẫn hoạt động đúng.
+        /// </summary>
+        public byte[] CaptureFullFrame(out int width, out int height, out int totalW, out int totalH)
+        {
+            _bounds = Screen.PrimaryScreen?.Bounds ?? _bounds;
+            totalW = width = _bounds.Width;
+            totalH = height = _bounds.Height;
+
+            try
+            {
+                Bitmap bmp = new Bitmap(_bounds.Width, _bounds.Height, PixelFormat.Format32bppPArgb);
+                using (Graphics g = Graphics.FromImage(bmp))
+                    g.CopyFromScreen(_bounds.Location, Point.Empty, _bounds.Size);
+
+                // Cập nhật _prevBitmap để dirty rect tiếp theo so sánh đúng với frame này
+                _prevBitmap?.Dispose();
+                _prevBitmap = (Bitmap)bmp.Clone();
+
+                using (var ms = new MemoryStream())
+                {
+                    if (_jpegCodec != null) bmp.Save(ms, _jpegCodec, _encoderParams);
+                    else bmp.Save(ms, ImageFormat.Jpeg);
+                    bmp.Dispose();
+                    return ms.ToArray();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"[ScreenCapture] CaptureFullFrame lỗi: {ex.Message}");
+                return Array.Empty<byte>();
+            }
+        }
+
         #endregion
 
         #region Private Helper Methods
@@ -172,7 +207,7 @@ namespace remoteServer.Services
             BitmapData dataCur = current.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadOnly, current.PixelFormat);
             BitmapData dataPrev = prev.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadOnly, prev.PixelFormat);
 
-            int bytesPerPixel = 2; // 16bpp = 2 bytes/pixel
+            int bytesPerPixel = 4; // 32bpp = 4 bytes/pixel
             int stride = dataCur.Stride;
 
             // Con trỏ tới dòng đầu tiên
@@ -188,9 +223,9 @@ namespace remoteServer.Services
                 // Duyệt qua các cột (nhảy cóc 4 pixel mỗi lần)
                 for (int x = 0; x < w; x += 4)
                 {
-                    // So sánh giá trị pixel (ushort vì là 16-bit color)
-                    ushort p1 = *((ushort*)(rowCur + x * bytesPerPixel));
-                    ushort p2 = *((ushort*)(rowPrev + x * bytesPerPixel));
+                    // So sánh giá trị pixel (uint vì là 32-bit color)
+                    uint p1 = *((uint*)(rowCur + x * bytesPerPixel));
+                    uint p2 = *((uint*)(rowPrev + x * bytesPerPixel));
 
                     if (p1 != p2)
                     {

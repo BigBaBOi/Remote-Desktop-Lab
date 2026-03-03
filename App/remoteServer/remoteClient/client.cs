@@ -43,7 +43,8 @@ namespace remoteClient
         {
             InitializeComponent();
             SetupUI();
-            this.KeyPreview = true; // Cho phép Form bắt sự kiện phím trước khi Control con xử lý
+            this.KeyPreview = true;
+            this.DoubleBuffered = true; // Giảm nhấp nháy khi repaint form
 
             _connection = new ClientConnection();
 
@@ -116,7 +117,8 @@ namespace remoteClient
             // Xử lý sự kiện click nút
             btnConnect.Click += BtnConnect_Click;
             btnSendFile.Click += BtnSendFile_Click;
-            btnOpenReceived.Click += (s, e) => {
+            btnOpenReceived.Click += (s, e) =>
+            {
                 string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ReceivedFiles");
                 Directory.CreateDirectory(path);
                 System.Diagnostics.Process.Start("explorer.exe", path);
@@ -218,11 +220,14 @@ namespace remoteClient
             _lastMouseMove = DateTime.Now;
 
             Rectangle rect = GetImageDisplayRectangle(pbScreen);
-            if (rect.Contains(e.Location))
+            if (rect.Width > 0 && rect.Height > 0)
             {
-                // Chuẩn hóa tọa độ về [0.0 - 1.0] để Server tự nội suy theo độ phân giải của nó
-                float nx = (float)(e.X - rect.X) / rect.Width;
-                float ny = (float)(e.Y - rect.Y) / rect.Height;
+                // Đảm bảo chuột không bị nhảy ra ngoài khi di chuyển nhanh (Clamp)
+                float ex = Math.Max(rect.X, Math.Min(e.X, rect.Right));
+                float ey = Math.Max(rect.Y, Math.Min(e.Y, rect.Bottom));
+
+                float nx = (ex - rect.X) / rect.Width;
+                float ny = (ey - rect.Y) / rect.Height;
                 SendInput(InputType.MouseMove, nx, ny, 0, 0);
             }
         }
@@ -230,10 +235,13 @@ namespace remoteClient
         private void PbScreen_MouseDown(object sender, MouseEventArgs e)
         {
             Rectangle rect = GetImageDisplayRectangle(pbScreen);
-            if (rect.Contains(e.Location))
+            if (rect.Width > 0 && rect.Height > 0)
             {
-                float nx = (float)(e.X - rect.X) / rect.Width;
-                float ny = (float)(e.Y - rect.Y) / rect.Height;
+                float ex = Math.Max(rect.X, Math.Min(e.X, rect.Right));
+                float ey = Math.Max(rect.Y, Math.Min(e.Y, rect.Bottom));
+
+                float nx = (ex - rect.X) / rect.Width;
+                float ny = (ey - rect.Y) / rect.Height;
                 int btn = (e.Button == MouseButtons.Left) ? 0 : (e.Button == MouseButtons.Right) ? 1 : 2;
                 SendInput(InputType.MouseDown, nx, ny, 0, btn);
             }
@@ -242,10 +250,15 @@ namespace remoteClient
         private void PbScreen_MouseUp(object sender, MouseEventArgs e)
         {
             Rectangle rect = GetImageDisplayRectangle(pbScreen);
-            if (rect.Contains(e.Location))
+            if (rect.Width > 0 && rect.Height > 0)
             {
-                float nx = (float)(e.X - rect.X) / rect.Width;
-                float ny = (float)(e.Y - rect.Y) / rect.Height;
+                // Giới hạn tọa độ trong vùng ảnh thực tế
+                float ex = Math.Max(rect.X, Math.Min(e.X, rect.Right));
+                float ey = Math.Max(rect.Y, Math.Min(e.Y, rect.Bottom));
+
+                float nx = (ex - rect.X) / rect.Width;
+                float ny = (ey - rect.Y) / rect.Height;
+
                 int btn = (e.Button == MouseButtons.Left) ? 0 : (e.Button == MouseButtons.Right) ? 1 : 2;
                 SendInput(InputType.MouseUp, nx, ny, 0, btn);
             }
@@ -385,8 +398,8 @@ namespace remoteClient
                     var chunk = Image.FromStream(ms);
 
                     // 1. Xác định kích thước thực (Server gửi TotalW/H)
-                    int totalW = screenDto.TotalWidth > 0 ? screenDto.Width : screenDto.Width;
-                    int totalH = screenDto.TotalHeight > 0 ? screenDto.Height : screenDto.Height;
+                    int totalW = screenDto.TotalWidth > 0 ? screenDto.TotalWidth : screenDto.Width;
+                    int totalH = screenDto.TotalHeight > 0 ? screenDto.TotalHeight : screenDto.Height;
 
                     // 2. Tạo hoặc Resize BackBuffer nếu kích thước thay đổi
                     if (_backBuffer == null || _backBuffer.Width != totalW || _backBuffer.Height != totalH)
@@ -398,7 +411,16 @@ namespace remoteClient
                     // 3. Vẽ phần thay đổi (Dirty Rect Chunk) lên BackBuffer
                     using (var g = Graphics.FromImage(_backBuffer))
                     {
-                        g.DrawImage(chunk, screenDto.Left, screenDto.Top);
+                        // QUAN TRỌNG: Thiết lập để vẽ pixel-perfect, tránh bị ghosting do DPI scaling
+                        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+                        g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+                        g.CompositingQuality = System.Drawing.Drawing2D.CompositingQuality.HighSpeed;
+
+                        // Ép GDI+ vẽ đúng kích thước pixel thực tế (Fix lỗi ghosting/smearing)
+                        g.DrawImage(chunk,
+                                   new Rectangle(screenDto.Left, screenDto.Top, screenDto.Width, screenDto.Height),
+                                   0, 0, chunk.Width, chunk.Height,
+                                   GraphicsUnit.Pixel);
                     }
 
                     // 4. Gán BackBuffer vào PictureBox (chỉ khi reference thay đổi)
@@ -407,7 +429,7 @@ namespace remoteClient
                         pbScreen.Image = _backBuffer;
                     }
 
-                    // Yêu cầu vẽ lại UI (Async)
+                    // Yêu cầu vẽ lại UI
                     pbScreen.Invalidate();
 
                     // Cập nhật thông tin kích thước để dùng cho tính toán Input

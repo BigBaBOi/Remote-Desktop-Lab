@@ -463,22 +463,32 @@ namespace remoteServer.Network
         private async Task SendScreenUpdatesAsync(CancellationToken token)
         {
             Logger.Log("[Stream] Bắt đầu gửi màn hình.");
+            DateTime lastFullFrame = DateTime.MinValue;
+
             while (!token.IsCancellationRequested && _client.Connected)
             {
                 try
                 {
                     int w, h, l, t, totalW, totalH;
-
-                    // Chụp màn hình & Tính toán "Vùng thay đổi" (Dirty Rect)
-                    // Hàm này trả về null nếu màn hình không thay đổi gì so với frame trước
                     byte[] imageBytes = _screenCapture.CaptureScreen(out w, out h, out l, out t, out totalW, out totalH);
+
+                    // Nếu không có thay đổi (imageBytes == null), nhưng đã quá 1 giây từ full frame cuối -> gửi keepalive
+                    bool noChange = (imageBytes == null || imageBytes.Length == 0);
+                    bool needsKeepalive = noChange && (DateTime.Now - lastFullFrame).TotalMilliseconds > 1000;
+
+                    if (needsKeepalive)
+                    {
+                        imageBytes = _screenCapture.CaptureFullFrame(out w, out h, out totalW, out totalH);
+                        l = 0;
+                        t = 0;
+                    }
 
                     if (imageBytes != null && imageBytes.Length > 0)
                     {
                         var screenDto = new ScreenFrameDto
                         {
                             ImageData = imageBytes,
-                            Width = w,      // Kích thước mảnh thay đổi
+                            Width = w,      // Kích thước mảnh thay đổi (hoặc full nếu là keepalive)
                             Height = h,
                             Left = l,       // Vị trí
                             Top = t,
@@ -489,6 +499,12 @@ namespace remoteServer.Network
 
                         byte[] payload = SerializationHelper.Serialize(screenDto);
                         await SendPacketAsync(PacketType.ScreenFrame, payload);
+
+                        // Nếu vừa gửi full frame (l=0, t=0 và kích thước khớp total), cập nhật thời gian
+                        if (l == 0 && t == 0 && w == totalW && h == totalH)
+                        {
+                            lastFullFrame = DateTime.Now;
+                        }
                     }
 
                     // Giới hạn FPS ~50 (Delay 20ms) để giữ cho CPU không bị quá tải
